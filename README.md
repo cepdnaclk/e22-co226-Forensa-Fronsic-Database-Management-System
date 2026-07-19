@@ -5,35 +5,107 @@ ___
 ## Please refer the instructions in below URL:
 
 https://projects.ce.pdn.ac.lk/docs/how-to-add-a-project
-## Running the Backend (Windows)
+# Setup Guide
 
-1. Download the project as a ZIP from GitHub.
-2. Extract the ZIP file.
-3. Open the project folder in Visual Studio Code.
-4. Open the terminal in VS Code.
-5. Make sure you are in the project root folder.
-6. Run:
+## Prerequisites
+
+Before running the project, install:
+
+- Python 3.10 or later
+- MySQL Server
+- MySQL Workbench (optional)
+
+---
+
+## 1. Clone the Repository
 
 ```bash
-.\run_backend.bat
+git clone https://github.com/cepdnaclk/project_forensa.git
+cd project_forensa
 ```
 
-7. Wait until you see:
+---
 
-```
-Uvicorn running on http://127.0.0.1:8000
-```
+## 2. Create a Virtual Environment
 
-8. Open your browser and visit:
-
-```
-http://127.0.0.1:8000
+```bash
+python -m venv .venv
 ```
 
-API documentation:
+Activate the virtual environment (Windows):
 
-```
-http://127.0.0.1:8000/docs
+```bash
+.venv\Scripts\activate
 ```
 
-**Note:** On the first run, the script will automatically create a virtual environment and install the required Python packages. This may take a few minutes depending on your internet connection.
+---
+
+## 3. Install Required Python Packages
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+If required, install the following packages manually:
+
+```bash
+pip install mysql-connector-python
+pip install python-dotenv
+```
+
+---
+
+## 4. Set Up the Database
+
+Create a MySQL database:
+
+```sql
+CREATE DATABASE ForensicMedicalDB;
+```
+
+Run the SQL scripts in this order:
+
+1. `database/01. Table_Creation.sql`
+2. `database/02. Data_Insertion.sql`
+
+---
+
+## 5. Configure Environment Variables
+
+Create a `.env` file inside the `backend` folder.
+
+Example:
+
+```env
+DB_HOST=localhost
+DB_NAME=ForensicMedicalDB
+DB_USER=root
+DB_PASSWORD=your_password
+DB_PORT=3306
+```
+
+---
+
+## 6. Run the Backend
+
+From the project root directory:
+
+```bash
+run_backend.bat
+```
+
+or
+
+```bash
+python backend/app.py
+```
+
+---
+
+## Technologies Used
+
+- Python
+- FastAPI
+- MySQL
+- MySQL Connector/Python
+- python-dotenv

@@ -112,7 +112,13 @@
         }
 
         function getHomeHash() {
-            return getAuthToken() ? 'cases' : 'about_us';
+            const token = getAuthToken();
+            if (!token) return 'about_us';
+            const user = getAuthUser();
+            if (!user) return 'about_us';
+            if (user.role === 'Lab Technician') return 'laboratory';
+            if (user.role === 'Evidence Officer') return 'incidents';
+            return 'cases';
         }
 
         // Generate and display navigation dynamically based on auth state
@@ -129,18 +135,41 @@
             linksHtml += `<a id="nav-about_us" href="#about_us" style="color: #ffffff; text-decoration: none; margin-right: 15px;">ABOUT_US</a>`;
 
             if (token) {
-                // Authenticated links
-                linksHtml += `
-                    <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
-                    <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
-                    <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
-                    <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
-                    <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
-                    <a id="nav-audit_logs" href="#audit_logs" style="color: #ffffff; text-decoration: none; margin-right: 15px;">AUDIT_LOGS</a>
-                `;
+                // Authenticated links based on role
+                if (user.role === 'Administrator') {
+                    linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
+                        <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
+                        <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
+                        <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
+                        <a id="nav-audit_logs" href="#audit_logs" style="color: #ffffff; text-decoration: none; margin-right: 15px;">AUDIT_LOGS</a>
+                    `;
+                } else if (user.role === 'JMO') {
+                    linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
+                        <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
+                    `;
+                } else if (user.role === 'Doctor') {
+                    linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
+                    `;
+                } else if (user.role === 'Lab Technician') {
+                    linksHtml += `
+                        <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
+                        <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
+                    `;
+                } else if (user.role === 'Evidence Officer') {
+                    linksHtml += `
+                        <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
+                    `;
+                }
+                
                 authHtml = `
                     <span style="background: rgba(255,255,255,0.15); padding: 5px 10px; border-radius: 4px; margin-right: 10px; font-weight: normal; font-size: 12px;">
-                        👤 <strong>${user.full_name}</strong>
+                        👤 <strong>${user.full_name} (${user.role})</strong>
                     </span>
                     <button onclick="handleLogout()" style="background-color: #cc0022; color: white; border: none; padding: 5px 10px; font-weight: bold; cursor: pointer; font-size: 11px; border-radius: 4px; transition: background 0.2s;">
                         Logout
@@ -169,7 +198,7 @@
 
             const mainContent = document.getElementById('main-content');
             
-            // Get the hash, default to cases/about_us
+            // Get the hash, default to home page for role
             let pageId = window.location.hash.substring(1);
             if (!pageId) {
                 pageId = getHomeHash();
@@ -189,8 +218,25 @@
 
             if (token && (pageId === 'login' || pageId === 'signup')) {
                 // Redirect authenticated user away from auth pages
-                window.location.hash = 'cases';
+                window.location.hash = getHomeHash();
                 return;
+            }
+
+            // Enforce role-based page permission checks on the client side
+            if (token && !publicPages.includes(pageId)) {
+                const allowed = {
+                    'Administrator': ['cases', 'laboratory', 'court_reports', 'incidents', 'staff', 'audit_logs'],
+                    'JMO': ['cases', 'court_reports', 'staff'],
+                    'Doctor': ['cases', 'staff'],
+                    'Lab Technician': ['laboratory', 'incidents'],
+                    'Evidence Officer': ['incidents']
+                };
+                const user = getAuthUser();
+                if (user && allowed[user.role] && !allowed[user.role].includes(pageId)) {
+                    // Redirect to default landing page if page is not allowed
+                    window.location.hash = getHomeHash();
+                    return;
+                }
             }
 
             // Update navigation highlights
@@ -224,6 +270,10 @@
                     setAuthState(null, null);
                     window.location.hash = 'login';
                     return;
+                }
+
+                if (response.status === 403) {
+                    throw new Error("Permission Denied: Your role is not authorized to access this section.");
                 }
 
                 if (!response.ok) {
@@ -382,6 +432,118 @@
                 console.error(error);
                 alertBox.textContent = error.message;
                 alertBox.style.display = 'block';
+            }
+        }
+
+        function toggleAddCaseForm() {
+            const container = document.getElementById('add-case-container');
+            if (container) {
+                container.style.display = container.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        async function handleCreateCase(event) {
+            event.preventDefault();
+            const token = getAuthToken();
+            if (!token) return;
+
+            const case_number = document.getElementById('case-number').value;
+            const title = document.getElementById('case-title').value;
+            const case_type = document.getElementById('case-type').value;
+            const status = document.getElementById('case-status').value;
+            const opened_date = document.getElementById('case-opened-date').value;
+            const assigned_to = document.getElementById('case-assigned-to').value || null;
+            const description = document.getElementById('case-description').value;
+
+            const payload = {
+                case_number,
+                title,
+                case_type,
+                status,
+                opened_date,
+                assigned_to,
+                description
+            };
+
+            try {
+                const response = await fetch(`${apiBase}/api/cases`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.status === 403) {
+                    alert("Permission Denied: Your role does not have permission to manage cases.");
+                    return;
+                }
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || "Failed to create case.");
+                }
+
+                alert("Case created successfully!");
+                loadContent(); // refresh cases page
+            } catch (error) {
+                alert("Error creating case: " + error.message);
+            }
+        }
+
+        function toggleAddIncidentForm() {
+            const container = document.getElementById('add-incident-container');
+            if (container) {
+                container.style.display = container.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        async function handleCreateIncident(event) {
+            event.preventDefault();
+            const token = getAuthToken();
+            if (!token) return;
+
+            const case_id = parseInt(document.getElementById('incident-case-id').value);
+            const incident_type = document.getElementById('incident-type').value;
+            const location = document.getElementById('incident-location').value;
+            const police_station = document.getElementById('incident-police-station').value;
+            const incident_date = document.getElementById('incident-date').value;
+            const description = document.getElementById('incident-description').value;
+
+            const payload = {
+                case_id,
+                incident_type,
+                location,
+                police_station,
+                incident_date,
+                description
+            };
+
+            try {
+                const response = await fetch(`${apiBase}/api/incidents`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.status === 403) {
+                    alert("Permission Denied: Your role does not have permission to manage incidents.");
+                    return;
+                }
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || "Failed to create incident.");
+                }
+
+                alert("Incident created successfully!");
+                loadContent(); // refresh page
+            } catch (error) {
+                alert("Error creating incident: " + error.message);
             }
         }
 
