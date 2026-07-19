@@ -5,14 +5,69 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+class UserSignup(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    full_name: str = Field(min_length=2, max_length=100)
+    role: str = Field(min_length=2, max_length=100)
+    password: str = Field(min_length=6)
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+USERS: dict[str, dict[str, Any]] = {
+    "dr_gunawardena": {
+        "username": "dr_gunawardena",
+        "full_name": "Dr. R. Gunawardena",
+        "role": "Senior Pathologist",
+        "password": "password123",
+    },
+    "dr_silva": {
+        "username": "dr_silva",
+        "full_name": "Dr. K. Silva",
+        "role": "Laboratory Lead",
+        "password": "password123",
+    },
+    "officer_fernando": {
+        "username": "officer_fernando",
+        "full_name": "Officer Fernando",
+        "role": "Field Duty Officer",
+        "password": "password123",
+    },
+}
+
+
+def get_current_user(authorization: str | None = Header(None)) -> dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid authentication token"
+        )
+    token = authorization.split(" ")[1]
+    if not token.startswith("mock-token-"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token format"
+        )
+    username = token.replace("mock-token-", "", 1)
+    if username not in USERS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User session not found"
+        )
+    return USERS[username]
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "docs" / "Code" / "frontend"
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 app = FastAPI(title="Forensa API (No Database)", version="2.0.0")
 app.add_middleware(
@@ -78,12 +133,12 @@ def find_case(case_id: int) -> dict[str, Any]:
     raise HTTPException(404, "Case not found")
 
 
-def add_audit(action: str, resource: str) -> None:
+def add_audit(action: str, resource: str, username: str = "system_user") -> None:
     logs = RESOURCES["audit-logs"]
     logs.append({
         "id": max((item["id"] for item in logs), default=0) + 1,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "username": "system_user",
+        "username": username,
         "action": action,
         "resource": resource,
     })
@@ -94,8 +149,57 @@ def health() -> dict[str, str]:
     return {"status": "ok", "storage": "memory", "database": "none"}
 
 
+@app.post("/api/auth/signup")
+def signup(payload: UserSignup) -> dict[str, Any]:
+    username_lower = payload.username.strip().lower()
+    if not username_lower:
+        raise HTTPException(400, "Username cannot be empty")
+    if username_lower in USERS:
+        raise HTTPException(400, "Username already exists")
+    
+    USERS[username_lower] = {
+        "username": username_lower,
+        "full_name": payload.full_name.strip(),
+        "role": payload.role.strip(),
+        "password": payload.password,
+    }
+    # Also register them as a staff member in RESOURCES for completeness if they aren't there
+    if not any(x["employee_number"] == f"EMP-{username_lower}" for x in RESOURCES["staff"]):
+        RESOURCES["staff"].append({
+            "id": max((x["id"] for x in RESOURCES["staff"]), default=0) + 1,
+            "employee_number": f"EMP-{username_lower}",
+            "full_name": payload.full_name.strip(),
+            "role": payload.role.strip(),
+            "extension": "N/A",
+            "duty_status": "On Duty",
+            "shift": "Day"
+        })
+        
+    add_audit("Signed Up User", username_lower, username_lower)
+    return {"username": username_lower, "full_name": payload.full_name, "role": payload.role}
+
+
+@app.post("/api/auth/login")
+def login(payload: UserLogin) -> dict[str, Any]:
+    username_lower = payload.username.strip().lower()
+    if username_lower not in USERS or USERS[username_lower]["password"] != payload.password:
+        raise HTTPException(401, "Invalid username or password")
+    
+    user = USERS[username_lower]
+    # Simple mock token: "mock-token-<username>"
+    token = f"mock-token-{username_lower}"
+    add_audit("Logged In", username_lower, username_lower)
+    return {
+        "token": token,
+        "username": username_lower,
+        "full_name": user["full_name"],
+        "role": user["role"]
+    }
+
+
 @app.get("/api/cases")
-def list_cases(status_filter: str | None = None) -> list[dict[str, Any]]:
+def list_cases(status_filter: str | None = None, authorization: str | None = Header(None)) -> list[dict[str, Any]]:
+    get_current_user(authorization)
     items = CASES
     if status_filter:
         items = [case for case in CASES if case["status"] == status_filter]
@@ -103,41 +207,46 @@ def list_cases(status_filter: str | None = None) -> list[dict[str, Any]]:
 
 
 @app.get("/api/cases/{case_id}")
-def get_case(case_id: int) -> dict[str, Any]:
+def get_case(case_id: int, authorization: str | None = Header(None)) -> dict[str, Any]:
+    get_current_user(authorization)
     return find_case(case_id)
 
 
 @app.post("/api/cases", status_code=status.HTTP_201_CREATED)
-def create_case(payload: CaseCreate) -> dict[str, Any]:
+def create_case(payload: CaseCreate, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = get_current_user(authorization)
     if any(case["case_number"] == payload.case_number for case in CASES):
         raise HTTPException(409, "Case number already exists")
     item = {"id": max((case["id"] for case in CASES), default=0) + 1, **payload.model_dump()}
     CASES.append(item)
-    add_audit("Created Case", item["case_number"])
+    add_audit("Created Case", item["case_number"], user["username"])
     return item
 
 
 @app.patch("/api/cases/{case_id}")
-def update_case(case_id: int, payload: CaseUpdate) -> dict[str, Any]:
+def update_case(case_id: int, payload: CaseUpdate, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = get_current_user(authorization)
     case = find_case(case_id)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(400, "No fields supplied")
     case.update(changes)
-    add_audit("Updated Case", case["case_number"])
+    add_audit("Updated Case", case["case_number"], user["username"])
     return case
 
 
 @app.delete("/api/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_case(case_id: int) -> Response:
+def delete_case(case_id: int, authorization: str | None = Header(None)) -> Response:
+    user = get_current_user(authorization)
     case = find_case(case_id)
     CASES.remove(case)
-    add_audit("Deleted Case", case["case_number"])
+    add_audit("Deleted Case", case["case_number"], user["username"])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/api/{resource_name}")
-def list_resource(resource_name: str) -> list[dict[str, Any]]:
+def list_resource(resource_name: str, authorization: str | None = Header(None)) -> list[dict[str, Any]]:
+    get_current_user(authorization)
     if resource_name not in RESOURCES:
         raise HTTPException(404, "Resource not found")
     return sorted(RESOURCES[resource_name], key=lambda item: item["id"], reverse=True)
@@ -152,9 +261,12 @@ def page_heading(title: str, body: str) -> str:
 
 
 @app.get("/api/pages/{page_id}", response_class=HTMLResponse)
-def dynamic_page(page_id: str) -> str:
-    if page_id in {"about_us", "contact_us"}:
+def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
+    if page_id in {"about_us", "contact_us", "login", "signup"}:
         return (FRONTEND_DIR / "pages" / f"{page_id}.html").read_text(encoding="utf-8")
+    
+    # Authenticate user for protected pages
+    get_current_user(authorization)
     if page_id == "cases":
         cards = "".join(f'<div style="background:#fffdf5;border:1px solid #e0dacb;padding:15px;margin-bottom:8px;"><strong>{esc(x["title"])} – {esc(x["case_number"])}</strong><p style="margin:8px 0;font-size:13px;">Status: {esc(x["status"])} | Assigned: {esc(x["assigned_to"] or "Unassigned")}</p><button onclick="showCase({x["id"]})" style="background:#004488;color:white;border:0;padding:6px 15px;cursor:pointer;">View Case</button></div>' for x in reversed(CASES))
         return page_heading("Active Forensic Cases & Applications", cards or "<p>No cases found.</p>")

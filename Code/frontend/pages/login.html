@@ -1,0 +1,168 @@
+<style>
+    .auth-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 40px 10px;
+    }
+    .auth-card {
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+        border: 1px solid #e0dacb;
+        width: 100%;
+        max-width: 420px;
+        padding: 35px;
+        box-sizing: border-box;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .auth-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.12);
+    }
+    .auth-title {
+        color: #260099;
+        font-size: 24px;
+        font-weight: 700;
+        margin-top: 0;
+        margin-bottom: 8px;
+        text-align: center;
+    }
+    .auth-subtitle {
+        color: #666666;
+        font-size: 14px;
+        margin-bottom: 25px;
+        text-align: center;
+    }
+    .form-group {
+        margin-bottom: 20px;
+        position: relative;
+    }
+    .form-group label {
+        display: block;
+        color: #333333;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .form-group input, .form-group select {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid #cccccc;
+        border-radius: 6px;
+        font-size: 14px;
+        background-color: #fafafa;
+        box-sizing: border-box;
+        transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+    }
+    .form-group input:focus, .form-group select:focus {
+        border-color: #260099;
+        background-color: #ffffff;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(38, 0, 153, 0.15);
+    }
+    .auth-btn {
+        width: 100%;
+        background-color: #260099;
+        color: #ffffff;
+        border: none;
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 15px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.2s, transform 0.1s;
+    }
+    .auth-btn:hover {
+        background-color: #1c0073;
+    }
+    .auth-btn:active {
+        transform: scale(0.98);
+    }
+    .auth-footer {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 13px;
+        color: #555555;
+    }
+    .auth-footer a {
+        color: #004488;
+        text-decoration: none;
+        font-weight: bold;
+    }
+    .auth-footer a:hover {
+        text-decoration: underline;
+    }
+    .alert-box {
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        margin-bottom: 20px;
+        display: none;
+    }
+    .alert-error {
+        background-color: #ffeaea;
+        color: #cc0000;
+        border: 1px solid #ffcccc;
+    }
+    .alert-success {
+        background-color: #eaffea;
+        color: #008800;
+        border: 1px solid #ccffcc;
+    }
+    /* Predefined credentials box styling */
+    .credentials-info {
+        background-color: #f7f3e8;
+        border: 1px solid #e0dacb;
+        border-radius: 6px;
+        padding: 12px;
+        margin-top: 20px;
+        font-size: 12px;
+        color: #555555;
+    }
+    .credentials-info h4 {
+        margin: 0 0 6px 0;
+        color: #260099;
+        font-size: 13px;
+    }
+    .credentials-info ul {
+        margin: 0;
+        padding-left: 18px;
+    }
+</style>
+
+<div class="auth-container">
+    <div class="auth-card">
+        <h3 class="auth-title">Sign In</h3>
+        <p class="auth-subtitle">Access the Forensic Case Portal</p>
+
+        <div id="login-alert" class="alert-box alert-error"></div>
+
+        <form onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label for="login-username">Username</label>
+                <input type="text" id="login-username" placeholder="e.g. dr_gunawardena" required autocomplete="username">
+            </div>
+            
+            <div class="form-group">
+                <label for="login-password">Password</label>
+                <input type="password" id="login-password" placeholder="••••••••" required autocomplete="current-password">
+            </div>
+
+            <button type="submit" class="auth-btn">Sign In</button>
+        </form>
+
+        <div class="auth-footer">
+            Don't have an account? <a href="#signup">Register here</a>
+        </div>
+
+        <div class="credentials-info">
+            <h4>Demo Credentials (In-Memory)</h4>
+            <ul>
+                <li><strong>dr_gunawardena</strong> / password123</li>
+                <li><strong>dr_silva</strong> / password123</li>
+                <li><strong>officer_fernando</strong> / password123</li>
+            </ul>
+        </div>
+    </div>
+</div>
