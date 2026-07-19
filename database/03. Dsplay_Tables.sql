@@ -1,0 +1,29 @@
+USE ForensicMedicalDB;
+
+SELECT * FROM Patient;
+SELECT * FROM PatientHistory;
+SELECT * FROM ForensicCase;
+SELECT * FROM Incident;
+SELECT * FROM Staff;
+SELECT * FROM Doctor;
+SELECT * FROM JMO;
+SELECT * FROM Postmortem;
+SELECT * FROM ExaminationReport;
+SELECT * FROM Evidence;
+SELECT * FROM EvidenceSample;
+SELECT * FROM ChainOfCustody;
+SELECT * FROM Laboratory;
+SELECT * FROM LaboratoryTest;
+SELECT * FROM CourtReport;
+SELECT * FROM Court;
+SELECT * FROM CaseCourt;
+SELECT * FROM UserAccount;
+SELECT * FROM Role;
+SELECT * FROM Permission;
+SELECT * FROM RolePermission;
+SELECT * FROM AuditLog;
+SELECT * FROM Notification;
+
+SELECT * FROM DigitalSignature;
+
+SELECT * FROM BackupRecord;
