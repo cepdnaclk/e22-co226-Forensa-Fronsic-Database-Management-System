@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ministry of Health - Forensic Case Portal</title>
+</head>
+<body style="background-color: #f7f3e8; font-family: Arial, sans-serif; margin: 0; padding: 0; color: #333333;">
+
+    <!-- Top Government Navigation Banner -->
+    <div style="background-color: #260099; border-bottom: 4px solid #260099; padding: 0 10px;">
+        <table border="0" cellpadding="12" cellspacing="0" style="width: 100%; max-width: 1200px; margin: 0 auto;">
+            <tr>
+                <td style="color: #ffffff; font-weight: bold; font-size: 20px; width: 40px; text-align: center; background-color: #cc0022; cursor: pointer;" onclick="window.location.hash = getHomeHash();">
+                    &#8962;
+                </td>
+                <td>
+                    <span id="nav-container" style="color: #ffffff; font-weight: bold; font-size: 13px;">
+                        <!-- Dynamically generated navigation links -->
+                    </span>
+                </td>
+                <td align="right" id="auth-status-container" style="color: #ffffff; font-size: 13px; font-weight: bold;">
+                    <!-- Dynamically generated login status / details -->
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Main Two-Column Content Layout -->
+    <table border="0" cellpadding="20" cellspacing="0" style="width: 100%; max-width: 1200px; margin: 20px auto;">
+        <tr valign="top">
+            
+            <!-- Left Side: Main Content (Dynamically Loaded) -->
+            <td id="main-content" style="width: 70%; padding-right: 10px;">
+                <div style="text-align: center; padding: 50px; color: #666666; font-size: 14px;">
+                    Loading cases...
+                </div>
+            </td>
+
+            <!-- Right Side: Sidebar (Complaints & Circulars) -->
+            <td style="width: 30%; padding-left: 10px;">
+                
+                <!-- Notice 1 -->
+                <div style="background-color: #ffffff; border: 1px solid #dddddd; padding: 15px; margin-bottom: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.05);">
+                    <table border="0" cellpadding="0" cellspacing="0">
+                        <tr valign="middle">
+                            <td style="color: #260099; font-size: 24px; padding-right: 10px;">&#9888;</td>
+                            <td style="font-size: 13px; font-weight: bold; color: #004488; text-decoration: underline; cursor: pointer;">
+                                Urgent: Submit Outstanding Chain of Custody Logs
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Notice 2 -->
+                <div style="background-color: #ffffff; border: 1px solid #dddddd; padding: 15px; margin-bottom: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.05);">
+                    <table border="0" cellpadding="0" cellspacing="0">
+                        <tr valign="middle">
+                            <td style="color: #0088cc; font-size: 24px; padding-right: 10px;">&#128196;</td>
+                            <td style="font-size: 13px; font-weight: bold; color: #004488; text-decoration: underline; cursor: pointer;">
+                                Nomination list for Appointed Forensic Doctors (2026)
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Notice 3 -->
+                <div style="background-color: #ffffff; border: 1px solid #dddddd; padding: 15px; margin-bottom: 15px; box-shadow: 1px 1px 3px rgba(0,0,0,0.05);">
+                    <table border="0" cellpadding="0" cellspacing="0">
+                        <tr valign="middle">
+                            <td style="color: #0088cc; font-size: 24px; padding-right: 10px;">&#128196;</td>
+                            <td style="font-size: 13px; font-weight: bold; color: #004488; text-decoration: underline; cursor: pointer;">
+                                Laboratory Test Protocols Revision - National Policy
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+            </td>
+        </tr>
+    </table>
+
+    <!-- Footer -->
+    <div style="background-color: #333333; color: #ffffff; text-align: center; padding: 15px; font-size: 11px; margin-top: 40px;">
+        &copy; 2026 Department of Forensic Medicine. Ministry Official Web Portal. All Rights Reserved.
+    </div>
+
+    <script>
+        // Determine backend API base URL
+        const apiBase = (window.location.protocol === 'file:' || window.location.port !== '8000') 
+            ? 'http://127.0.0.1:8000' 
+            : '';
+
+        // Authentication state helpers
+        function getAuthToken() {
+            return sessionStorage.getItem('token');
+        }
+
+        function getAuthUser() {
+            const userStr = sessionStorage.getItem('user');
+            return userStr ? JSON.parse(userStr) : null;
+        }
+
+        function setAuthState(token, user) {
+            if (token && user) {
+                sessionStorage.setItem('token', token);
+                sessionStorage.setItem('user', JSON.stringify(user));
+            } else {
+                sessionStorage.removeItem('token');
+                sessionStorage.removeItem('user');
+            }
+            updateNavigation();
+        }
+
+        function getHomeHash() {
+            const token = getAuthToken();
+            if (!token) return 'about_us';
+            const user = getAuthUser();
+            if (!user) return 'about_us';
+            if (user.role === 'Lab Technician') return 'laboratory';
+            if (user.role === 'Evidence Officer') return 'incidents';
+            return 'cases';
+        }
+
+        // Generate and display navigation dynamically based on auth state
+        function updateNavigation() {
+            const navContainer = document.getElementById('nav-container');
+            const authContainer = document.getElementById('auth-status-container');
+            const token = getAuthToken();
+            const user = getAuthUser();
+
+            let linksHtml = '';
+            let authHtml = '';
+
+            // Public links
+            linksHtml += `<a id="nav-about_us" href="#about_us" style="color: #ffffff; text-decoration: none; margin-right: 15px;">ABOUT_US</a>`;
+
+            if (token) {
+                // Authenticated links based on role
+                if (user.role === 'Administrator') {
+                    linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
+                        <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
+                        <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
+                        <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
+                        <a id="nav-audit_logs" href="#audit_logs" style="color: #ffffff; text-decoration: none; margin-right: 15px;">AUDIT_LOGS</a>
+                    `;
+                } else if (user.role === 'JMO') {
+                    linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
+                        <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
+                    `;
+                } else if (user.role === 'Doctor') {
+                    linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
+                    `;
+                } else if (user.role === 'Lab Technician') {
+                    linksHtml += `
+                        <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
+                        <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
+                    `;
+                } else if (user.role === 'Evidence Officer') {
+                    linksHtml += `
+                        <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
+                    `;
+                }
+                
+                authHtml = `
+                    <span style="background: rgba(255,255,255,0.15); padding: 5px 10px; border-radius: 4px; margin-right: 10px; font-weight: normal; font-size: 12px;">
+                        👤 <strong>${user.full_name} (${user.role})</strong>
+                    </span>
+                    <button onclick="handleLogout()" style="background-color: #cc0022; color: white; border: none; padding: 5px 10px; font-weight: bold; cursor: pointer; font-size: 11px; border-radius: 4px; transition: background 0.2s;">
+                        Logout
+                    </button>
+                `;
+            } else {
+                // Unauthenticated links
+                linksHtml += `
+                    <a id="nav-login" href="#login" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LOGIN</a>
+                    <a id="nav-signup" href="#signup" style="color: #ffffff; text-decoration: none; margin-right: 15px;">SIGNUP</a>
+                `;
+                authHtml = `
+                    <a href="#login" style="color: #ffffff; text-decoration: none; border: 1px solid #ffffff; padding: 4px 10px; border-radius: 4px; transition: background 0.2s; font-size: 12px;">Sign In</a>
+                `;
+            }
+
+            linksHtml += `<a id="nav-contact_us" href="#contact_us" style="color: #ffffff; text-decoration: none;">CONTACT_US</a>`;
+            
+            navContainer.innerHTML = linksHtml;
+            authContainer.innerHTML = authHtml;
+        }
+
+        async function loadContent() {
+            // First update navigation tabs
+            updateNavigation();
+
+            const mainContent = document.getElementById('main-content');
+            
+            // Get the hash, default to home page for role
+            let pageId = window.location.hash.substring(1);
+            if (!pageId) {
+                pageId = getHomeHash();
+                window.location.hash = pageId;
+                return;
+            }
+
+            // Client route guard
+            const publicPages = ['about_us', 'contact_us', 'login', 'signup'];
+            const token = getAuthToken();
+
+            if (!token && !publicPages.includes(pageId)) {
+                // Redirect unauthenticated user to login page
+                window.location.hash = 'login';
+                return;
+            }
+
+            if (token && (pageId === 'login' || pageId === 'signup')) {
+                // Redirect authenticated user away from auth pages
+                window.location.hash = getHomeHash();
+                return;
+            }
+
+            // Enforce role-based page permission checks on the client side
+            if (token && !publicPages.includes(pageId)) {
+                const allowed = {
+                    'Administrator': ['cases', 'laboratory', 'court_reports', 'incidents', 'staff', 'audit_logs'],
+                    'JMO': ['cases', 'court_reports', 'staff'],
+                    'Doctor': ['cases', 'staff'],
+                    'Lab Technician': ['laboratory', 'incidents'],
+                    'Evidence Officer': ['incidents']
+                };
+                const user = getAuthUser();
+                if (user && allowed[user.role] && !allowed[user.role].includes(pageId)) {
+                    // Redirect to default landing page if page is not allowed
+                    window.location.hash = getHomeHash();
+                    return;
+                }
+            }
+
+            // Update navigation highlights
+            const navLinks = document.querySelectorAll('#nav-container a');
+            navLinks.forEach(link => {
+                if (link.id === 'nav-' + pageId) {
+                    link.style.textDecoration = 'underline';
+                    link.style.color = '#ffff00'; // light yellow highlight for active link
+                } else {
+                    link.style.textDecoration = 'none';
+                    link.style.color = '#ffffff';
+                }
+            });
+
+            mainContent.innerHTML = `
+                <div style="text-align: center; padding: 50px; color: #666666; font-size: 14px;">
+                    Loading page...
+                </div>
+            `;
+
+            try {
+                // Fetch the HTML fragment from the FastAPI backend API
+                const headers = {};
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                const response = await fetch(`${apiBase}/api/pages/${pageId}`, { headers });
+                
+                if (response.status === 401) {
+                    // Session expired or invalid token
+                    setAuthState(null, null);
+                    window.location.hash = 'login';
+                    return;
+                }
+
+                if (response.status === 403) {
+                    throw new Error("Permission Denied: Your role is not authorized to access this section.");
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load page (HTTP ${response.status})`);
+                }
+                const html = await response.text();
+                mainContent.innerHTML = html;
+            } catch (error) {
+                console.error(error);
+                mainContent.innerHTML = `
+                    <div style="background-color: #fff0f0; border: 1px solid #ffcccc; color: #cc0000; padding: 20px; text-align: center; border-radius: 4px;">
+                        <h3 style="margin-top: 0; font-size: 16px;">Error Loading Page</h3>
+                        <p style="font-size: 13px; margin: 10px 0;">${error.message}</p>
+                        <button onclick="loadContent()" style="background-color: #cc0000; color: white; border: none; padding: 8px 15px; cursor: pointer; font-weight: bold; font-size: 12px; border-radius: 2px;">
+                            Retry
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        async function showCase(caseId) {
+            try {
+                const headers = {};
+                const token = getAuthToken();
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                const response = await fetch(`${apiBase}/api/cases/${caseId}`, { headers });
+                if (response.status === 401) {
+                    setAuthState(null, null);
+                    window.location.hash = 'login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch case details (HTTP ${response.status})`);
+                }
+                const caseData = await response.json();
+                alert(
+                    `--- Forensic Case Details ---\n\n` +
+                    `Case ID: ${caseData.id}\n` +
+                    `Case Number: ${caseData.case_number}\n` +
+                    `Title: ${caseData.title}\n` +
+                    `Type: ${caseData.case_type}\n` +
+                    `Status: ${caseData.status}\n` +
+                    `Assigned To: ${caseData.assigned_to || 'Unassigned'}\n` +
+                    `Opened Date: ${caseData.opened_date}\n\n` +
+                    `Description:\n${caseData.description || 'No description provided.'}`
+                );
+            } catch (error) {
+                console.error(error);
+                alert(`Error loading case details: ${error.message}`);
+            }
+        }
+
+        // Global Form Handlers
+        async function handleLogin(event) {
+            event.preventDefault();
+            const usernameInput = document.getElementById('login-username');
+            const passwordInput = document.getElementById('login-password');
+            const alertBox = document.getElementById('login-alert');
+
+            alertBox.style.display = 'none';
+
+            try {
+                const response = await fetch(`${apiBase}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: usernameInput.value,
+                        password: passwordInput.value
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Login failed');
+                }
+
+                // Store credentials
+                setAuthState(data.token, {
+                    username: data.username,
+                    full_name: data.full_name,
+                    role: data.role
+                });
+
+                // Navigate to case portal
+                window.location.hash = 'cases';
+            } catch (error) {
+                console.error(error);
+                alertBox.textContent = error.message;
+                alertBox.style.display = 'block';
+            }
+        }
+
+        async function handleSignup(event) {
+            event.preventDefault();
+            const fullnameInput = document.getElementById('signup-fullname');
+            const usernameInput = document.getElementById('signup-username');
+            const roleSelect = document.getElementById('signup-role');
+            const passwordInput = document.getElementById('signup-password');
+            const confirmPasswordInput = document.getElementById('signup-confirm-password');
+            const alertBox = document.getElementById('signup-alert');
+
+            alertBox.style.display = 'none';
+
+            if (passwordInput.value !== confirmPasswordInput.value) {
+                alertBox.textContent = 'Passwords do not match';
+                alertBox.style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${apiBase}/api/auth/signup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: usernameInput.value,
+                        full_name: fullnameInput.value,
+                        role: roleSelect.value,
+                        password: passwordInput.value
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Registration failed');
+                }
+
+                // Autologin after registration
+                const loginResponse = await fetch(`${apiBase}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: usernameInput.value,
+                        password: passwordInput.value
+                    })
+                });
+
+                const loginData = await loginResponse.json();
+
+                if (!loginResponse.ok) {
+                    throw new Error(loginData.detail || 'Auto-login failed');
+                }
+
+                setAuthState(loginData.token, {
+                    username: loginData.username,
+                    full_name: loginData.full_name,
+                    role: loginData.role
+                });
+
+                window.location.hash = 'cases';
+            } catch (error) {
+                console.error(error);
+                alertBox.textContent = error.message;
+                alertBox.style.display = 'block';
+            }
+        }
+
+        function toggleAddCaseForm() {
+            const container = document.getElementById('add-case-container');
+            if (container) {
+                container.style.display = container.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        async function handleCreateCase(event) {
+            event.preventDefault();
+            const token = getAuthToken();
+            if (!token) return;
+
+            const case_number = document.getElementById('case-number').value;
+            const title = document.getElementById('case-title').value;
+            const case_type = document.getElementById('case-type').value;
+            const status = document.getElementById('case-status').value;
+            const opened_date = document.getElementById('case-opened-date').value;
+            const assigned_to = document.getElementById('case-assigned-to').value || null;
+            const description = document.getElementById('case-description').value;
+
+            const payload = {
+                case_number,
+                title,
+                case_type,
+                status,
+                opened_date,
+                assigned_to,
+                description
+            };
+
+            try {
+                const response = await fetch(`${apiBase}/api/cases`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.status === 403) {
+                    alert("Permission Denied: Your role does not have permission to manage cases.");
+                    return;
+                }
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || "Failed to create case.");
+                }
+
+                alert("Case created successfully!");
+                loadContent(); // refresh cases page
+            } catch (error) {
+                alert("Error creating case: " + error.message);
+            }
+        }
+
+        function toggleAddIncidentForm() {
+            const container = document.getElementById('add-incident-container');
+            if (container) {
+                container.style.display = container.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        async function handleCreateIncident(event) {
+            event.preventDefault();
+            const token = getAuthToken();
+            if (!token) return;
+
+            const case_id = parseInt(document.getElementById('incident-case-id').value);
+            const incident_type = document.getElementById('incident-type').value;
+            const location = document.getElementById('incident-location').value;
+            const police_station = document.getElementById('incident-police-station').value;
+            const incident_date = document.getElementById('incident-date').value;
+            const description = document.getElementById('incident-description').value;
+
+            const payload = {
+                case_id,
+                incident_type,
+                location,
+                police_station,
+                incident_date,
+                description
+            };
+
+            try {
+                const response = await fetch(`${apiBase}/api/incidents`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.status === 403) {
+                    alert("Permission Denied: Your role does not have permission to manage incidents.");
+                    return;
+                }
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || "Failed to create incident.");
+                }
+
+                alert("Incident created successfully!");
+                loadContent(); // refresh page
+            } catch (error) {
+                alert("Error creating incident: " + error.message);
+            }
+        }
+
+        function handleLogout() {
+            setAuthState(null, null);
+            window.location.hash = 'login';
+        }
+
+        // Listen for route changes
+        window.addEventListener('hashchange', loadContent);
+
+        // Load initial page content on load
+        window.addEventListener('DOMContentLoaded', loadContent);
+    </script>
+</body>
+</html>
