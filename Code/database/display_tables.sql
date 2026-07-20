@@ -23,7 +23,5 @@ SELECT * FROM Permission;
 SELECT * FROM RolePermission;
 SELECT * FROM AuditLog;
 SELECT * FROM Notification;
-
 SELECT * FROM DigitalSignature;
-
 SELECT * FROM BackupRecord;
