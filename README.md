@@ -1,5 +1,5 @@
 ___
-# DELETE THIS INSTRUCTIONS AND ADD A SHORT INTRODUCTION ABOUT YOUR PROJECT
+FORENSIA - Database System for a Forensic Medical Department 
 ___
 
 ## Please refer the instructions in below URL:
@@ -64,8 +64,16 @@ CREATE DATABASE ForensicMedicalDB;
 
 Run the SQL scripts in this order:
 
-1. `database/01. Table_Creation.sql`
-2. `database/02. Data_Insertion.sql`
+Run the SQL scripts in this order:
+```
+1.  database/table_creation.sql	
+2.  database/constraints.sql	
+3.  database/indexes.sql	
+4.	database/views.sql	
+5.	dtabase/stored_procedures.sql	
+6.	database/triggers.sql	
+7.	database/data_insertion.sql
+```
 
 ---
 
