@@ -7,6 +7,8 @@ from typing import Any
 from contextlib import asynccontextmanager
 import mysql.connector
 from mysql.connector import Error
+
+
 import os
 from dotenv import load_dotenv
 
@@ -88,6 +90,8 @@ def execute_query(query: str, params: tuple | None = None, fetch: bool = True):
             connection.rollback()
             connection.close()
         return None
+    
+
 
 def add_audit(action: str, resource: str, username: str = "system_user") -> None:
     """Add an audit log entry to database"""
@@ -129,6 +133,8 @@ def init_database():
             WHERE table_schema = %s 
             AND table_name = 'ForensicCase'
         """
+        
+        
         result = execute_query(check_query, (DB_CONFIG['database'],))
         
         if not result or result[0]["count"] == 0:

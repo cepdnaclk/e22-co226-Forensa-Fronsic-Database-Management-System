@@ -43,14 +43,13 @@ Activate the virtual environment (Windows):
 ## 3. Install Required Python Packages
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -r Code/backend/requirements.txt
 ```
 
 If required, install the following packages manually:
 
 ```bash
-pip install mysql-connector-python
-pip install python-dotenv
+pip install mysql-connector-python python-dotenv pytest httpx
 ```
 
 ---
@@ -72,7 +71,7 @@ Run the SQL scripts in this order:
 
 ## 5. Configure Environment Variables
 
-Create a `.env` file inside the `backend` folder.
+Create a `.env` file inside the `Code/backend` folder.
 
 Example:
 
@@ -86,7 +85,7 @@ DB_PORT=3306
 
 ---
 
-## 6. Run the Backend
+## 6. Run the Backend & Frontend
 
 From the project root directory:
 
@@ -102,6 +101,28 @@ python backend/app.py
 
 ---
 
+## 7. Run API Tests
+
+Run the complete test suite with `pytest`:
+
+```bash
+pytest Code/backend/tests -v
+```
+
+or directly using the virtual environment executable:
+
+```bash
+.\.venv\Scripts\pytest.exe Code/backend/tests -v
+```
+
+To run a specific test file:
+
+```bash
+pytest Code/backend/tests/test_auth.py -v
+```
+
+---
+
 ## Technologies Used
 
 - Python
@@ -109,3 +130,4 @@ python backend/app.py
 - MySQL
 - MySQL Connector/Python
 - python-dotenv
+- Pytest & HTTPX
