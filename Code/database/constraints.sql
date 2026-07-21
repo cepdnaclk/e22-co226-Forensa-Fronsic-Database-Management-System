@@ -48,16 +48,6 @@ ALTER TABLE BackupRecord
 ADD CONSTRAINT chk_backup_status 
 CHECK (Status IN ('Successful', 'Failed', 'In Progress', 'Completed'));
 
--- Add CHECK constraint for staff role
-ALTER TABLE Staff 
-ADD CONSTRAINT chk_staff_role 
-CHECK (Role IN ('Doctor', 'JMO', 'Lab Technician', 'Administrator', 'Forensic Expert'));
-
--- Add CHECK constraint for user role
-ALTER TABLE UserAccount 
-ADD CONSTRAINT chk_user_role 
-CHECK (UserRole IN ('Administrator', 'Doctor', 'JMO', 'Lab Technician', 'Staff', 'Evidence Officer'));
-
 -- ==========================================
 -- UNIQUE CONSTRAINTS (Additional)
 -- ==========================================
@@ -149,14 +139,6 @@ SELECT
 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
 WHERE TABLE_SCHEMA = 'ForensicMedicalDB'
 ORDER BY TABLE_NAME, CONSTRAINT_TYPE;
-
--- Check all CHECK constraints
-SELECT 
-    TABLE_NAME,
-    CONSTRAINT_NAME,
-    CHECK_CLAUSE
-FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS
-WHERE CONSTRAINT_SCHEMA = 'ForensicMedicalDB';
 
 -- Check all DEFAULT values
 SELECT 
