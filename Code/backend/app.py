@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import html
-from datetime import datetime
+import base64
+import hashlib
+import hmac
+import secrets
+from io import BytesIO
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from contextlib import asynccontextmanager
@@ -14,9 +19,16 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 # Load dotenv relative to this file
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -92,6 +104,44 @@ def execute_query(query: str, params: tuple | None = None, fetch: bool = True):
         return None
     
 
+
+PASSWORD_ITERATIONS = 210_000
+
+def hash_password(password: str) -> str:
+    """Return a salted PBKDF2-SHA256 password hash."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS
+    )
+    return "pbkdf2_sha256${}${}${}".format(
+        PASSWORD_ITERATIONS,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(digest).decode("ascii"),
+    )
+
+def verify_password(password: str, stored_password: str) -> bool:
+    """Verify a PBKDF2 password hash; also accepts legacy plaintext records."""
+    if not stored_password.startswith("pbkdf2_sha256$"):
+        return hmac.compare_digest(password, stored_password)
+    try:
+        _, iterations_text, salt_text, digest_text = stored_password.split("$", 3)
+        expected = base64.b64decode(digest_text)
+        actual = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            base64.b64decode(salt_text),
+            int(iterations_text),
+        )
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+def require_permission(user: dict[str, Any], permission_name: str) -> None:
+    if not check_permission(user["username"], permission_name):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied: {permission_name} is required.",
+        )
 
 def add_audit(action: str, resource: str, username: str = "system_user") -> None:
     """Add an audit log entry to database"""
@@ -434,7 +484,7 @@ def signup(payload: UserSignup) -> dict[str, Any]:
         INSERT INTO UserAccount (Username, Password, UserRole, StaffID)
         VALUES (%s, %s, %s, %s)
     """
-    execute_query(insert_user, (username_lower, payload.password, db_role, staff_id), fetch=False)
+    execute_query(insert_user, (username_lower, hash_password(payload.password), db_role, staff_id), fetch=False)
     
     # If the role is JMO/Doctor compatible, register in the Doctor and JMO tables
     if payload.role.strip() in {"Senior Pathologist", "Medical Observer"}:
@@ -470,9 +520,17 @@ def login(payload: UserLogin) -> dict[str, Any]:
         WHERE u.Username = %s
     """
     result = execute_query(user_query, (username_lower,))
-    if not result or result[0]["Password"] != payload.password:
+    if not result or not verify_password(payload.password, result[0]["Password"]):
         raise HTTPException(401, "Invalid username or password")
-    
+
+    # Transparently upgrade old plaintext passwords after a successful login.
+    if not result[0]["Password"].startswith("pbkdf2_sha256$"):
+        execute_query(
+            "UPDATE UserAccount SET Password = %s WHERE Username = %s",
+            (hash_password(payload.password), username_lower),
+            fetch=False,
+        )
+
     user = result[0]
     token = f"mock-token-{username_lower}"
     add_audit("Logged In", username_lower, username_lower)
@@ -744,6 +802,303 @@ def create_incident(payload: IncidentCreate, authorization: str | None = Header(
     }
 
 # ==========================================
+# Reports and Database Backup Endpoints
+# ==========================================
+
+def _report_user(authorization: str | None) -> dict[str, Any]:
+    user = get_current_user(authorization)
+    require_permission(user, "View Reports")
+    return user
+
+@app.get("/api/reports/daily")
+def daily_case_report(
+    report_date: date | None = None,
+    authorization: str | None = Header(None),
+) -> dict[str, Any]:
+    user = _report_user(authorization)
+    selected_date = report_date or date.today()
+    rows = execute_query(
+        """
+        SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status, CaseDescription
+        FROM ForensicCase
+        WHERE DATE(IncidentDate) = %s
+        ORDER BY CaseID DESC
+        """,
+        (selected_date,),
+    )
+    if rows is None:
+        raise HTTPException(500, "Unable to generate daily report")
+    add_audit("Viewed Daily Case Report", str(selected_date), user["username"])
+    return {"report_type": "daily", "date": str(selected_date), "total_cases": len(rows), "cases": rows}
+
+@app.get("/api/reports/monthly")
+def monthly_case_report(
+    year: int | None = None,
+    month: int | None = None,
+    authorization: str | None = Header(None),
+) -> dict[str, Any]:
+    user = _report_user(authorization)
+    today = date.today()
+    selected_year = year or today.year
+    selected_month = month or today.month
+    if selected_month < 1 or selected_month > 12:
+        raise HTTPException(400, "Month must be between 1 and 12")
+    rows = execute_query(
+        """
+        SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status, CaseDescription
+        FROM ForensicCase
+        WHERE YEAR(IncidentDate) = %s AND MONTH(IncidentDate) = %s
+        ORDER BY IncidentDate DESC, CaseID DESC
+        """,
+        (selected_year, selected_month),
+    )
+    if rows is None:
+        raise HTTPException(500, "Unable to generate monthly report")
+    status_summary: dict[str, int] = {}
+    for row in rows:
+        key = row.get("Status") or "Unknown"
+        status_summary[key] = status_summary.get(key, 0) + 1
+    add_audit("Viewed Monthly Report", f"{selected_year}-{selected_month:02d}", user["username"])
+    return {
+        "report_type": "monthly",
+        "year": selected_year,
+        "month": selected_month,
+        "total_cases": len(rows),
+        "status_summary": status_summary,
+        "cases": rows,
+    }
+
+@app.get("/api/reports/pending")
+def pending_cases_report(authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = _report_user(authorization)
+    rows = execute_query(
+        """
+        SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status, CaseDescription
+        FROM ForensicCase
+        WHERE LOWER(Status) IN ('pending', 'open', 'active', 'in progress', 'under investigation')
+        ORDER BY IncidentDate ASC, CaseID ASC
+        """
+    )
+    if rows is None:
+        raise HTTPException(500, "Unable to generate pending cases report")
+    add_audit("Viewed Pending Cases Report", f"{len(rows)} cases", user["username"])
+    return {"report_type": "pending_cases", "total_cases": len(rows), "cases": rows}
+
+@app.get("/api/reports/court")
+def court_report(authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = get_current_user(authorization)
+    require_permission(user, "Generate Court Reports")
+    rows = execute_query(
+        """
+        SELECT cr.CourtReportID, fc.CaseNumber, fc.CaseType,
+               cr.SubmissionDate, cr.Status, cr.ReportContent,
+               c.CourtName, c.Location AS CourtLocation, cc.HearingDate
+        FROM CourtReport cr
+        JOIN ForensicCase fc ON cr.CaseID = fc.CaseID
+        LEFT JOIN CaseCourt cc ON fc.CaseID = cc.CaseID
+        LEFT JOIN Court c ON cc.CourtID = c.CourtID
+        ORDER BY COALESCE(cc.HearingDate, cr.SubmissionDate) DESC
+        """
+    )
+    if rows is None:
+        raise HTTPException(500, "Unable to generate court report")
+    add_audit("Viewed Court Report", f"{len(rows)} records", user["username"])
+    return {"report_type": "court", "total_reports": len(rows), "reports": rows}
+
+@app.get("/api/reports/statistical")
+def statistical_report(authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = _report_user(authorization)
+    totals = execute_query("SELECT COUNT(*) AS total_cases FROM ForensicCase") or [{"total_cases": 0}]
+    by_status = execute_query(
+        "SELECT COALESCE(Status, 'Unknown') AS label, COUNT(*) AS total FROM ForensicCase GROUP BY Status ORDER BY total DESC"
+    ) or []
+    by_type = execute_query(
+        "SELECT COALESCE(CaseType, 'Unknown') AS label, COUNT(*) AS total FROM ForensicCase GROUP BY CaseType ORDER BY total DESC"
+    ) or []
+    monthly_trend = execute_query(
+        """
+        SELECT DATE_FORMAT(IncidentDate, '%Y-%m') AS month, COUNT(*) AS total
+        FROM ForensicCase
+        WHERE IncidentDate >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH)
+        GROUP BY DATE_FORMAT(IncidentDate, '%Y-%m')
+        ORDER BY month
+        """
+    ) or []
+    add_audit("Viewed Statistical Report", "Case statistics", user["username"])
+    return {
+        "report_type": "statistical",
+        "total_cases": totals[0]["total_cases"],
+        "cases_by_status": by_status,
+        "cases_by_type": by_type,
+        "monthly_trend": monthly_trend,
+    }
+
+
+def _pdf_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    return str(value)
+
+
+def _build_report_pdf(title: str, subtitle: str, columns: list[str], rows: list[list[Any]], generated_by: str, summary_lines: list[str] | None = None, landscape_mode: bool = True) -> BytesIO:
+    buffer = BytesIO()
+    pagesize = landscape(A4) if landscape_mode else A4
+    doc = SimpleDocTemplate(buffer, pagesize=pagesize, rightMargin=14*mm, leftMargin=14*mm, topMargin=14*mm, bottomMargin=14*mm, title=title, author="Forensa")
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("ForensaTitle", parent=styles["Title"], alignment=TA_CENTER, fontSize=18, leading=22, spaceAfter=4)
+    subtitle_style = ParagraphStyle("ForensaSubtitle", parent=styles["Heading2"], alignment=TA_CENTER, fontSize=11, leading=14, textColor=colors.HexColor("#333333"), spaceAfter=10)
+    small = ParagraphStyle("ForensaSmall", parent=styles["BodyText"], fontSize=8, leading=10)
+    story = [Paragraph("FORENSA", title_style), Paragraph("Forensic Medicine Management System", subtitle_style), Paragraph(title, styles["Heading1"]), Paragraph(subtitle, styles["BodyText"]), Spacer(1,6), Paragraph(f"Generated by: {_pdf_text(generated_by)}", small), Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", small), Spacer(1,10)]
+    if summary_lines:
+        for line in summary_lines:
+            story.append(Paragraph(html.escape(_pdf_text(line)), styles["BodyText"]))
+        story.append(Spacer(1,8))
+    table_data = [[Paragraph(html.escape(str(c)), small) for c in columns]]
+    for row in rows:
+        table_data.append([Paragraph(html.escape(_pdf_text(v)), small) for v in row])
+    if len(table_data) == 1:
+        table_data.append([Paragraph("No records found", small)] + ["" for _ in columns[1:]])
+    available_width = pagesize[0] - 28*mm
+    table = Table(table_data, repeatRows=1, colWidths=[available_width/max(len(columns),1)]*len(columns))
+    table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#260099")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("VALIGN",(0,0),(-1,-1),"TOP"),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#999999")),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f3fb")]),("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+    story.append(table)
+    def footer(canvas, doc_obj):
+        canvas.saveState(); canvas.setFont("Helvetica",8); canvas.drawString(14*mm,8*mm,"Confidential – Authorized Forensa users only"); canvas.drawRightString(pagesize[0]-14*mm,8*mm,f"Page {doc_obj.page}"); canvas.restoreState()
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    buffer.seek(0)
+    return buffer
+
+
+def _pdf_response(buffer: BytesIO, filename: str) -> StreamingResponse:
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/reports/daily/pdf")
+def download_daily_case_report_pdf(report_date: date | None = None, authorization: str | None = Header(None)):
+    user = _report_user(authorization); selected_date = report_date or date.today()
+    rows = execute_query("""SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status, CaseDescription FROM ForensicCase WHERE DATE(IncidentDate) = %s ORDER BY CaseID DESC""", (selected_date,))
+    if rows is None: raise HTTPException(500, "Unable to generate daily report PDF")
+    data = [[r.get("CaseID"),r.get("CaseNumber"),r.get("CaseType"),r.get("IncidentDate"),r.get("Status"),r.get("CaseDescription")] for r in rows]
+    pdf = _build_report_pdf("Daily Case Report", f"Report date: {selected_date}", ["Case ID","Case Number","Case Type","Incident Date","Status","Description"], data, user["username"], [f"Total cases: {len(rows)}"])
+    add_audit("Downloaded Daily Case Report PDF", str(selected_date), user["username"])
+    return _pdf_response(pdf, f"Daily_Case_Report_{selected_date}.pdf")
+
+
+@app.get("/api/reports/monthly/pdf")
+def download_monthly_report_pdf(year: int | None = None, month: int | None = None, authorization: str | None = Header(None)):
+    user = _report_user(authorization); today = date.today(); selected_year = year or today.year; selected_month = month or today.month
+    if selected_month < 1 or selected_month > 12: raise HTTPException(400, "Month must be between 1 and 12")
+    rows = execute_query("""SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status, CaseDescription FROM ForensicCase WHERE YEAR(IncidentDate) = %s AND MONTH(IncidentDate) = %s ORDER BY IncidentDate DESC, CaseID DESC""", (selected_year, selected_month))
+    if rows is None: raise HTTPException(500, "Unable to generate monthly report PDF")
+    status_summary = {}
+    for row in rows:
+        key = row.get("Status") or "Unknown"; status_summary[key] = status_summary.get(key,0)+1
+    data = [[r.get("CaseID"),r.get("CaseNumber"),r.get("CaseType"),r.get("IncidentDate"),r.get("Status"),r.get("CaseDescription")] for r in rows]
+    summary = [f"Total cases: {len(rows)}", "Status summary: " + ", ".join(f"{k}: {v}" for k,v in status_summary.items())]
+    pdf = _build_report_pdf("Monthly Case Report", f"Period: {selected_year}-{selected_month:02d}", ["Case ID","Case Number","Case Type","Incident Date","Status","Description"], data, user["username"], summary)
+    add_audit("Downloaded Monthly Report PDF", f"{selected_year}-{selected_month:02d}", user["username"])
+    return _pdf_response(pdf, f"Monthly_Report_{selected_year}_{selected_month:02d}.pdf")
+
+
+@app.get("/api/reports/pending/pdf")
+def download_pending_cases_report_pdf(authorization: str | None = Header(None)):
+    user = _report_user(authorization)
+    rows = execute_query("""SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status, CaseDescription FROM ForensicCase WHERE LOWER(Status) IN ('pending','open','active','in progress','under investigation') ORDER BY IncidentDate ASC, CaseID ASC""")
+    if rows is None: raise HTTPException(500, "Unable to generate pending cases report PDF")
+    data = [[r.get("CaseID"),r.get("CaseNumber"),r.get("CaseType"),r.get("IncidentDate"),r.get("Status"),r.get("CaseDescription")] for r in rows]
+    pdf = _build_report_pdf("Pending Cases Report", "Cases awaiting completion or further action", ["Case ID","Case Number","Case Type","Incident Date","Status","Description"], data, user["username"], [f"Total pending cases: {len(rows)}"])
+    add_audit("Downloaded Pending Cases Report PDF", f"{len(rows)} cases", user["username"])
+    return _pdf_response(pdf, f"Pending_Cases_Report_{date.today()}.pdf")
+
+
+@app.get("/api/reports/court/pdf")
+def download_court_report_pdf(authorization: str | None = Header(None)):
+    user = get_current_user(authorization); require_permission(user, "Generate Court Reports")
+    rows = execute_query("""SELECT cr.CourtReportID, fc.CaseNumber, fc.CaseType, cr.SubmissionDate, cr.Status, cr.ReportContent, c.CourtName, c.Location AS CourtLocation, cc.HearingDate FROM CourtReport cr JOIN ForensicCase fc ON cr.CaseID = fc.CaseID LEFT JOIN CaseCourt cc ON fc.CaseID = cc.CaseID LEFT JOIN Court c ON cc.CourtID = c.CourtID ORDER BY COALESCE(cc.HearingDate, cr.SubmissionDate) DESC""")
+    if rows is None: raise HTTPException(500, "Unable to generate court report PDF")
+    data = [[r.get("CourtReportID"),r.get("CaseNumber"),r.get("CaseType"),r.get("CourtName"),r.get("HearingDate"),r.get("SubmissionDate"),r.get("Status"),r.get("ReportContent")] for r in rows]
+    pdf = _build_report_pdf("Court Report", "Court submissions, hearing details and report status", ["Report ID","Case Number","Case Type","Court","Hearing Date","Submitted","Status","Report Content"], data, user["username"], [f"Total court reports: {len(rows)}"])
+    add_audit("Downloaded Court Report PDF", f"{len(rows)} records", user["username"])
+    return _pdf_response(pdf, f"Court_Report_{date.today()}.pdf")
+
+
+@app.get("/api/reports/statistical/pdf")
+def download_statistical_report_pdf(authorization: str | None = Header(None)):
+    user = _report_user(authorization)
+    totals = execute_query("SELECT COUNT(*) AS total_cases FROM ForensicCase") or [{"total_cases":0}]
+    by_status = execute_query("SELECT COALESCE(Status,'Unknown') AS label, COUNT(*) AS total FROM ForensicCase GROUP BY Status ORDER BY total DESC") or []
+    by_type = execute_query("SELECT COALESCE(CaseType,'Unknown') AS label, COUNT(*) AS total FROM ForensicCase GROUP BY CaseType ORDER BY total DESC") or []
+    trend = execute_query("""SELECT DATE_FORMAT(IncidentDate,'%Y-%m') AS month, COUNT(*) AS total FROM ForensicCase WHERE IncidentDate >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH) GROUP BY DATE_FORMAT(IncidentDate,'%Y-%m') ORDER BY month""") or []
+    data = [["Cases by Status",r.get("label"),r.get("total")] for r in by_status] + [["Cases by Type",r.get("label"),r.get("total")] for r in by_type] + [["Monthly Trend",r.get("month"),r.get("total")] for r in trend]
+    pdf = _build_report_pdf("Statistical Report", "Summary of forensic case activity", ["Category","Label / Period","Total"], data, user["username"], [f"Total cases in database: {totals[0].get('total_cases',0)}"], landscape_mode=False)
+    add_audit("Downloaded Statistical Report PDF", "Case statistics", user["username"])
+    return _pdf_response(pdf, f"Statistical_Report_{date.today()}.pdf")
+
+
+def _sql_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, (datetime, date)):
+        value = value.isoformat(sep=" ") if isinstance(value, datetime) else value.isoformat()
+    if isinstance(value, (int, float)):
+        return str(value)
+    escaped = str(value).replace("\\", "\\\\").replace("'", "''")
+    return f"'{escaped}'"
+
+@app.post("/api/admin/database-backup")
+def create_database_backup(authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = get_current_user(authorization)
+    require_permission(user, "Manage Users")
+
+    connection = get_db_connection()
+    if not connection:
+        raise HTTPException(500, "Database connection failed")
+
+    backup_dir = BASE_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{DB_CONFIG['database']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+    backup_path = backup_dir / filename
+
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")
+        table_rows = cursor.fetchall()
+        table_key = next(iter(table_rows[0])) if table_rows else None
+        tables = [row[table_key] for row in table_rows] if table_key else []
+
+        with backup_path.open("w", encoding="utf-8") as output:
+            output.write(f"-- Backup of {DB_CONFIG['database']} generated {datetime.now().isoformat()}\n")
+            output.write("SET FOREIGN_KEY_CHECKS=0;\n\n")
+            for table in tables:
+                cursor.execute(f"SHOW CREATE TABLE `{table}`")
+                create_row = cursor.fetchone()
+                create_sql = create_row.get("Create Table")
+                output.write(f"DROP TABLE IF EXISTS `{table}`;\n{create_sql};\n\n")
+
+                cursor.execute(f"SELECT * FROM `{table}`")
+                records = cursor.fetchall()
+                for record in records:
+                    columns = ", ".join(f"`{name}`" for name in record.keys())
+                    values = ", ".join(_sql_literal(value) for value in record.values())
+                    output.write(f"INSERT INTO `{table}` ({columns}) VALUES ({values});\n")
+                output.write("\n")
+            output.write("SET FOREIGN_KEY_CHECKS=1;\n")
+        cursor.close()
+        connection.close()
+    except Exception as exc:
+        connection.close()
+        if backup_path.exists():
+            backup_path.unlink()
+        raise HTTPException(500, f"Backup failed: {exc}") from exc
+
+    add_audit("Created Database Backup", filename, user["username"])
+    return {"message": "Database backup created", "filename": filename, "location": str(backup_path)}
+
+# ==========================================
 # Generic Resource Endpoint
 # ==========================================
 
@@ -853,6 +1208,7 @@ def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
         "cases": "Manage Cases",
         "laboratory": "Perform Laboratory Tests",
         "court_reports": "Generate Court Reports",
+        "reports": "View Reports",
         "incidents": "Manage Evidence",
         "staff": "View Reports",
         "audit_logs": "Manage Users"
@@ -980,6 +1336,22 @@ def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
         body = "".join(f'<tr><td>LAB-{esc(str(row["TestID"]))}</td><td>{esc(row["TestType"])}</td><td>Analyst</td><td><strong>{esc("Completed" if row["Result"] else "In Progress")}</strong></td></tr>' for row in tests)
         return page_heading("Laboratory Services", f'<table border="1" cellpadding="8" cellspacing="0" style="width:100%;border-collapse:collapse;background:white;"><tr style="background:#260099;color:white;"><th>Request ID</th><th>Sample Type</th><th>Assigned Analyst</th><th>Status</th></tr>{body}</table>')
     
+    if page_id == "reports":
+        today = date.today()
+        report_html = f"""
+        <div style="background:white;border:1px solid #e0dacb;padding:20px;">
+            <p style="font-size:13px;margin-top:0;">Generate and download official PDF reports. All downloads are recorded in the audit log.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:15px;">
+                <div style="border:1px solid #ddd;padding:15px;border-radius:4px;"><h3 style="margin-top:0;color:#260099;">Daily Case Report</h3><input id="daily-report-date" type="date" value="{today.isoformat()}" style="width:100%;padding:7px;margin-bottom:10px;box-sizing:border-box;"><button onclick="downloadReportPdf('daily')" style="background:#260099;color:white;border:0;padding:8px 14px;cursor:pointer;">Download PDF</button></div>
+                <div style="border:1px solid #ddd;padding:15px;border-radius:4px;"><h3 style="margin-top:0;color:#260099;">Monthly Report</h3><div style="display:flex;gap:8px;margin-bottom:10px;"><input id="monthly-report-year" type="number" value="{today.year}" min="2000" max="2100" style="width:55%;padding:7px;box-sizing:border-box;"><input id="monthly-report-month" type="number" value="{today.month}" min="1" max="12" style="width:45%;padding:7px;box-sizing:border-box;"></div><button onclick="downloadReportPdf('monthly')" style="background:#260099;color:white;border:0;padding:8px 14px;cursor:pointer;">Download PDF</button></div>
+                <div style="border:1px solid #ddd;padding:15px;border-radius:4px;"><h3 style="margin-top:0;color:#260099;">Pending Cases</h3><p style="font-size:12px;">Pending, active, open and under-investigation cases.</p><button onclick="downloadReportPdf('pending')" style="background:#260099;color:white;border:0;padding:8px 14px;cursor:pointer;">Download PDF</button></div>
+                <div style="border:1px solid #ddd;padding:15px;border-radius:4px;"><h3 style="margin-top:0;color:#260099;">Court Report</h3><p style="font-size:12px;">Court submissions, hearings and report status.</p><button onclick="downloadReportPdf('court')" style="background:#260099;color:white;border:0;padding:8px 14px;cursor:pointer;">Download PDF</button></div>
+                <div style="border:1px solid #ddd;padding:15px;border-radius:4px;"><h3 style="margin-top:0;color:#260099;">Statistical Report</h3><p style="font-size:12px;">Cases by status, type and monthly trend.</p><button onclick="downloadReportPdf('statistical')" style="background:#260099;color:white;border:0;padding:8px 14px;cursor:pointer;">Download PDF</button></div>
+            </div><div id="report-download-status" style="margin-top:15px;font-size:13px;"></div>
+        </div>
+        """
+        return page_heading("Reports Centre", report_html)
+
     if page_id == "court_reports":
         query = """
             SELECT cr.*, fc.CaseNumber 

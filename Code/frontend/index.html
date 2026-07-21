@@ -141,6 +141,7 @@
                         <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
                         <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
                         <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
+                        <a id="nav-reports" href="#reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">REPORTS</a>
                         <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
                         <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
                         <a id="nav-audit_logs" href="#audit_logs" style="color: #ffffff; text-decoration: none; margin-right: 15px;">AUDIT_LOGS</a>
@@ -149,11 +150,13 @@
                     linksHtml += `
                         <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
                         <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
+                        <a id="nav-reports" href="#reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">REPORTS</a>
                         <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
                     `;
                 } else if (user.role === 'Doctor') {
                     linksHtml += `
                         <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-reports" href="#reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">REPORTS</a>
                         <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
                     `;
                 } else if (user.role === 'Lab Technician') {
@@ -225,9 +228,9 @@
             // Enforce role-based page permission checks on the client side
             if (token && !publicPages.includes(pageId)) {
                 const allowed = {
-                    'Administrator': ['cases', 'laboratory', 'court_reports', 'incidents', 'staff', 'audit_logs'],
-                    'JMO': ['cases', 'court_reports', 'staff'],
-                    'Doctor': ['cases', 'staff'],
+                    'Administrator': ['cases', 'laboratory', 'court_reports', 'reports', 'incidents', 'staff', 'audit_logs'],
+                    'JMO': ['cases', 'court_reports', 'reports', 'staff'],
+                    'Doctor': ['cases', 'reports', 'staff'],
                     'Lab Technician': ['laboratory', 'incidents'],
                     'Evidence Officer': ['incidents']
                 };
@@ -292,6 +295,55 @@
                         </button>
                     </div>
                 `;
+            }
+        }
+
+        async function downloadReportPdf(reportType) {
+            const token = getAuthToken();
+            const statusBox = document.getElementById('report-download-status');
+            let endpoint = `${apiBase}/api/reports/${reportType}/pdf`;
+            if (reportType === 'daily') {
+                const selectedDate = document.getElementById('daily-report-date').value;
+                endpoint += `?report_date=${encodeURIComponent(selectedDate)}`;
+            } else if (reportType === 'monthly') {
+                const year = document.getElementById('monthly-report-year').value;
+                const month = document.getElementById('monthly-report-month').value;
+                endpoint += `?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`;
+            }
+            if (statusBox) statusBox.innerHTML = '<span style="color:#555;">Generating PDF...</span>';
+            try {
+                const response = await fetch(endpoint, {
+                    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                });
+                if (response.status === 401) {
+                    setAuthState(null, null);
+                    window.location.hash = 'login';
+                    return;
+                }
+                if (!response.ok) {
+                    let message = `Download failed (HTTP ${response.status})`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.detail) message = errorData.detail;
+                    } catch (_) {}
+                    throw new Error(message);
+                }
+                const blob = await response.blob();
+                const disposition = response.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename="?([^";]+)"?/i);
+                const filename = match ? match[1] : `${reportType}_report.pdf`;
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+                if (statusBox) statusBox.innerHTML = `<span style="color:green;">${filename} downloaded successfully.</span>`;
+            } catch (error) {
+                if (statusBox) statusBox.innerHTML = `<span style="color:#cc0000;">${error.message}</span>`;
+                alert(error.message);
             }
         }
 
