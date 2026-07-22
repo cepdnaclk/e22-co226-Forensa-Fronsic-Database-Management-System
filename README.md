@@ -139,3 +139,24 @@ pytest Code/backend/tests/test_auth.py -v
 - MySQL Connector/Python
 - python-dotenv
 - Pytest & HTTPX
+
+## Backend report and security endpoints
+
+The backend now includes authenticated endpoints for:
+
+- `GET /api/reports/daily`
+- `GET /api/reports/monthly`
+- `GET /api/reports/pending`
+- `GET /api/reports/court`
+- `GET /api/reports/statistical`
+- `POST /api/admin/database-backup`
+
+New accounts use salted PBKDF2-SHA256 password hashes. Existing plaintext passwords are automatically upgraded after a successful login. Audit log entries are created when reports are viewed and when a backup is generated.
+
+Copy `Code/backend/.env.example` to `Code/backend/.env` and enter the local MySQL credentials before running the backend.
+
+## PDF Report Downloads
+
+The Reports Centre provides authenticated PDF downloads for Daily, Monthly, Pending Cases, Court, and Statistical reports. Install dependencies, restart the backend, log in, and open the **REPORTS** tab.
+
+PATIENT MODULE BUILD: 2026-07-22

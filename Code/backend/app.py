@@ -252,6 +252,27 @@ def init_database():
             insert_lp = "INSERT INTO RolePermission (RoleID, PermissionID) VALUES (4, 4)"
             execute_query(insert_lp, fetch=False)
 
+        # Ensure Doctor users can open and view the Court Reports page.
+        doctor_court_permission = """
+            SELECT rp.RolePermissionID
+            FROM RolePermission rp
+            JOIN Role r ON rp.RoleID = r.RoleID
+            JOIN Permission p ON rp.PermissionID = p.PermissionID
+            WHERE r.RoleName = %s AND p.PermissionName = %s
+        """
+        if not execute_query(doctor_court_permission, ("Doctor", "Generate Court Reports")):
+            add_doctor_court_permission = """
+                INSERT INTO RolePermission (RoleID, PermissionID)
+                SELECT r.RoleID, p.PermissionID
+                FROM Role r CROSS JOIN Permission p
+                WHERE r.RoleName = %s AND p.PermissionName = %s
+            """
+            execute_query(
+                add_doctor_court_permission,
+                ("Doctor", "Generate Court Reports"),
+                fetch=False,
+            )
+
         print("Database initialization complete!")
         
     except Exception as e:
@@ -329,6 +350,34 @@ class IncidentCreate(BaseModel):
     police_station: str = Field(min_length=2, max_length=100)
     description: str = ""
     incident_date: str
+
+class PatientCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=100)
+    nic: str | None = Field(default=None, max_length=20)
+    date_of_birth: str | None = None
+    gender: str | None = Field(default=None, max_length=10)
+    address: str | None = Field(default=None, max_length=255)
+    contact_no: str | None = Field(default=None, max_length=15)
+
+class PatientUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=2, max_length=100)
+    nic: str | None = Field(default=None, max_length=20)
+    date_of_birth: str | None = None
+    gender: str | None = Field(default=None, max_length=10)
+    address: str | None = Field(default=None, max_length=255)
+    contact_no: str | None = Field(default=None, max_length=15)
+
+class CourtReportCreate(BaseModel):
+    case_id: int
+    submission_date: str
+    status: str = Field(min_length=2, max_length=50)
+    report_content: str = Field(min_length=10, max_length=10000)
+
+class CourtReportUpdate(BaseModel):
+    case_id: int | None = None
+    submission_date: str | None = None
+    status: str | None = Field(default=None, min_length=2, max_length=50)
+    report_content: str | None = Field(default=None, min_length=10, max_length=10000)
 
 # ==========================================
 # Resource Mapping
@@ -802,6 +851,130 @@ def create_incident(payload: IncidentCreate, authorization: str | None = Header(
     }
 
 # ==========================================
+# Patient Management API Endpoints
+# ==========================================
+
+def _patient_to_dict(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("PatientID"),
+        "full_name": row.get("FullName"),
+        "nic": row.get("NIC"),
+        "date_of_birth": str(row.get("DateOfBirth")) if row.get("DateOfBirth") else None,
+        "gender": row.get("Gender"),
+        "address": row.get("Address"),
+        "contact_no": row.get("ContactNo"),
+        "registration_date": str(row.get("RegistrationDate")) if row.get("RegistrationDate") else None,
+    }
+
+@app.get("/api/patients")
+def list_patients(search: str | None = None, authorization: str | None = Header(None)) -> list[dict[str, Any]]:
+    get_current_user(authorization)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        rows = execute_query(
+            """
+            SELECT * FROM Patient
+            WHERE FullName LIKE %s OR NIC LIKE %s OR ContactNo LIKE %s
+            ORDER BY PatientID DESC
+            """,
+            (term, term, term),
+        )
+    else:
+        rows = execute_query("SELECT * FROM Patient ORDER BY PatientID DESC")
+    if rows is None:
+        raise HTTPException(500, "Unable to load patients")
+    return [_patient_to_dict(row) for row in rows]
+
+@app.get("/api/patients/{patient_id}")
+def get_patient(patient_id: int, authorization: str | None = Header(None)) -> dict[str, Any]:
+    get_current_user(authorization)
+    rows = execute_query("SELECT * FROM Patient WHERE PatientID = %s", (patient_id,))
+    if not rows:
+        raise HTTPException(404, "Patient not found")
+    patient = _patient_to_dict(rows[0])
+    cases = execute_query(
+        """
+        SELECT CaseID, CaseNumber, CaseType, IncidentDate, Status
+        FROM ForensicCase WHERE PatientID = %s ORDER BY CaseID DESC
+        """,
+        (patient_id,),
+    ) or []
+    patient["cases"] = cases
+    return patient
+
+@app.post("/api/patients", status_code=status.HTTP_201_CREATED)
+def create_patient(payload: PatientCreate, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = get_current_user(authorization)
+    require_permission(user, "Manage Cases")
+    nic = payload.nic.strip() if payload.nic else None
+    if nic and execute_query("SELECT PatientID FROM Patient WHERE NIC = %s", (nic,)):
+        raise HTTPException(409, "A patient with this NIC already exists")
+    patient_id = execute_query(
+        """
+        INSERT INTO Patient
+            (FullName, NIC, DateOfBirth, Gender, Address, ContactNo, RegistrationDate)
+        VALUES (%s, %s, %s, %s, %s, %s, CURDATE())
+        """,
+        (
+            payload.full_name.strip(), nic, payload.date_of_birth or None,
+            payload.gender or None, payload.address or None, payload.contact_no or None,
+        ),
+        fetch=False,
+    )
+    if not patient_id:
+        raise HTTPException(500, "Patient could not be created")
+    add_audit("Created Patient", f"Patient ID {patient_id}", user["username"])
+    return get_patient(patient_id, authorization)
+
+@app.patch("/api/patients/{patient_id}")
+def update_patient(patient_id: int, payload: PatientUpdate, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = get_current_user(authorization)
+    require_permission(user, "Manage Cases")
+    current_rows = execute_query("SELECT * FROM Patient WHERE PatientID = %s", (patient_id,))
+    if not current_rows:
+        raise HTTPException(404, "Patient not found")
+    current = current_rows[0]
+    nic = payload.nic.strip() if payload.nic is not None and payload.nic.strip() else (current.get("NIC") if payload.nic is None else None)
+    if nic:
+        duplicate = execute_query("SELECT PatientID FROM Patient WHERE NIC = %s AND PatientID <> %s", (nic, patient_id))
+        if duplicate:
+            raise HTTPException(409, "A patient with this NIC already exists")
+    values = (
+        payload.full_name.strip() if payload.full_name is not None else current.get("FullName"),
+        nic,
+        payload.date_of_birth if payload.date_of_birth is not None else current.get("DateOfBirth"),
+        payload.gender if payload.gender is not None else current.get("Gender"),
+        payload.address if payload.address is not None else current.get("Address"),
+        payload.contact_no if payload.contact_no is not None else current.get("ContactNo"),
+        patient_id,
+    )
+    execute_query(
+        """
+        UPDATE Patient SET FullName=%s, NIC=%s, DateOfBirth=%s, Gender=%s,
+                           Address=%s, ContactNo=%s WHERE PatientID=%s
+        """,
+        values,
+        fetch=False,
+    )
+    add_audit("Updated Patient", f"Patient ID {patient_id}", user["username"])
+    return get_patient(patient_id, authorization)
+
+@app.delete("/api/patients/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_patient(patient_id: int, authorization: str | None = Header(None)) -> Response:
+    user = get_current_user(authorization)
+    require_permission(user, "Manage Cases")
+    existing = execute_query("SELECT FullName FROM Patient WHERE PatientID = %s", (patient_id,))
+    if not existing:
+        raise HTTPException(404, "Patient not found")
+    linked = execute_query("SELECT COUNT(*) AS total FROM ForensicCase WHERE PatientID = %s", (patient_id,))
+    if linked and linked[0]["total"] > 0:
+        raise HTTPException(409, "Patient cannot be deleted because forensic cases are linked to this record")
+    execute_query("DELETE FROM PatientHistory WHERE PatientID = %s", (patient_id,), fetch=False)
+    execute_query("DELETE FROM Patient WHERE PatientID = %s", (patient_id,), fetch=False)
+    add_audit("Deleted Patient", existing[0]["FullName"], user["username"])
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+# ==========================================
 # Reports and Database Backup Endpoints
 # ==========================================
 
@@ -1099,6 +1272,77 @@ def create_database_backup(authorization: str | None = Header(None)) -> dict[str
     return {"message": "Database backup created", "filename": filename, "location": str(backup_path)}
 
 # ==========================================
+# Court Report Management API
+# ==========================================
+
+def _court_report_user(authorization: str | None) -> dict[str, Any]:
+    user = get_current_user(authorization)
+    require_permission(user, "Generate Court Reports")
+    return user
+
+@app.get("/api/court-reports/{report_id}")
+def get_court_report(report_id: int, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = _court_report_user(authorization)
+    rows = execute_query("""
+        SELECT cr.CourtReportID, cr.CaseID, fc.CaseNumber, fc.CaseType,
+               cr.SubmissionDate, cr.Status, cr.ReportContent
+        FROM CourtReport cr
+        LEFT JOIN ForensicCase fc ON cr.CaseID = fc.CaseID
+        WHERE cr.CourtReportID = %s
+    """, (report_id,))
+    if not rows:
+        raise HTTPException(404, "Court report not found")
+    add_audit("Viewed Court Report", f"CR-{report_id}", user["username"])
+    return rows[0]
+
+@app.post("/api/court-reports", status_code=status.HTTP_201_CREATED)
+def create_court_report(payload: CourtReportCreate, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = _court_report_user(authorization)
+    case_rows = execute_query("SELECT CaseID, CaseNumber FROM ForensicCase WHERE CaseID = %s", (payload.case_id,))
+    if not case_rows:
+        raise HTTPException(400, "Selected forensic case does not exist")
+    allowed = {"Draft", "Pending Review", "Approved", "Submitted", "Returned"}
+    if payload.status not in allowed:
+        raise HTTPException(400, "Invalid court report status")
+    report_id = execute_query("""
+        INSERT INTO CourtReport (CaseID, SubmissionDate, Status, ReportContent)
+        VALUES (%s, %s, %s, %s)
+    """, (payload.case_id, payload.submission_date, payload.status, payload.report_content.strip()), fetch=False)
+    if not report_id:
+        raise HTTPException(500, "Unable to save court report")
+    add_audit("Created Court Report", f"CR-{report_id} for {case_rows[0]['CaseNumber']}", user["username"])
+    return {"message": "Court report created successfully", "id": report_id}
+
+@app.patch("/api/court-reports/{report_id}")
+def update_court_report(report_id: int, payload: CourtReportUpdate, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = _court_report_user(authorization)
+    rows = execute_query("SELECT * FROM CourtReport WHERE CourtReportID = %s", (report_id,))
+    if not rows:
+        raise HTTPException(404, "Court report not found")
+    old = rows[0]
+    case_id = payload.case_id if payload.case_id is not None else old["CaseID"]
+    submitted = payload.submission_date if payload.submission_date is not None else old["SubmissionDate"]
+    report_status = payload.status if payload.status is not None else old["Status"]
+    content = payload.report_content.strip() if payload.report_content is not None else old["ReportContent"]
+    if not execute_query("SELECT CaseID FROM ForensicCase WHERE CaseID = %s", (case_id,)):
+        raise HTTPException(400, "Selected forensic case does not exist")
+    if report_status not in {"Draft", "Pending Review", "Approved", "Submitted", "Returned"}:
+        raise HTTPException(400, "Invalid court report status")
+    execute_query("""UPDATE CourtReport SET CaseID=%s, SubmissionDate=%s, Status=%s, ReportContent=%s WHERE CourtReportID=%s""",
+                  (case_id, submitted, report_status, content, report_id), fetch=False)
+    add_audit("Updated Court Report", f"CR-{report_id}", user["username"])
+    return {"message": "Court report updated successfully"}
+
+@app.delete("/api/court-reports/{report_id}")
+def delete_court_report(report_id: int, authorization: str | None = Header(None)) -> dict[str, Any]:
+    user = _court_report_user(authorization)
+    if not execute_query("SELECT CourtReportID FROM CourtReport WHERE CourtReportID = %s", (report_id,)):
+        raise HTTPException(404, "Court report not found")
+    execute_query("DELETE FROM CourtReport WHERE CourtReportID = %s", (report_id,), fetch=False)
+    add_audit("Deleted Court Report", f"CR-{report_id}", user["username"])
+    return {"message": "Court report deleted successfully"}
+
+# ==========================================
 # Generic Resource Endpoint
 # ==========================================
 
@@ -1205,7 +1449,6 @@ def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
     
     # Map page_id to required permission
     page_permissions = {
-        "cases": "Manage Cases",
         "laboratory": "Perform Laboratory Tests",
         "court_reports": "Generate Court Reports",
         "reports": "View Reports",
@@ -1221,6 +1464,20 @@ def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied to access page {page_id}"
             )
+
+    # Evidence Officers may view case records, but cannot create, edit, or delete them.
+    if page_id == "cases" and not (
+        check_permission(user["username"], "Manage Cases")
+        or user.get("role") == "Evidence Officer"
+    ):
+        raise HTTPException(403, "Permission denied to view cases")
+
+    # Patient management is available to clinical/case-management roles.
+    if page_id == "patients" and not (
+        check_permission(user["username"], "Manage Cases")
+        or user.get("role") in {"JMO", "Doctor", "Administrator"}
+    ):
+        raise HTTPException(403, "Permission denied to view patients")
     
     if page_id == "cases":
         can_manage = check_permission(user["username"], "Manage Cases")
@@ -1329,6 +1586,40 @@ def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
             )
         return page_heading("Active Forensic Cases & Applications", f"{add_button}{form_html}{cards or '<p>No cases found.</p>'}")
     
+    if page_id == "patients":
+        can_manage = check_permission(user["username"], "Manage Cases")
+        patients = execute_query("SELECT * FROM Patient ORDER BY PatientID DESC LIMIT 100") or []
+        add_button = ""
+        form_html = ""
+        if can_manage:
+            add_button = '<button onclick="togglePatientForm()" style="background:#260099;color:white;border:0;padding:8px 20px;font-weight:bold;cursor:pointer;margin-bottom:15px;">+ Add New Patient</button>'
+            form_html = """
+            <div id="patient-form-container" style="display:none;background:#f9f9fb;border:1px solid #c9c1b0;padding:20px;margin-bottom:15px;">
+              <h3 id="patient-form-title" style="margin-top:0;color:#260099;">Add New Patient</h3>
+              <form onsubmit="handleSavePatient(event)">
+                <input type="hidden" id="patient-id">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div><label><strong>Full Name</strong></label><input id="patient-full-name" required style="width:100%;padding:7px;box-sizing:border-box;"></div>
+                  <div><label><strong>NIC</strong></label><input id="patient-nic" maxlength="20" style="width:100%;padding:7px;box-sizing:border-box;"></div>
+                  <div><label><strong>Date of Birth</strong></label><input id="patient-dob" type="date" style="width:100%;padding:7px;box-sizing:border-box;"></div>
+                  <div><label><strong>Gender</strong></label><select id="patient-gender" style="width:100%;padding:7px;box-sizing:border-box;"><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option></select></div>
+                  <div><label><strong>Contact Number</strong></label><input id="patient-contact" maxlength="15" style="width:100%;padding:7px;box-sizing:border-box;"></div>
+                  <div><label><strong>Address</strong></label><input id="patient-address" maxlength="255" style="width:100%;padding:7px;box-sizing:border-box;"></div>
+                </div>
+                <div style="margin-top:15px;"><button type="submit" style="background:#260099;color:white;border:0;padding:8px 20px;cursor:pointer;">Save Patient</button><button type="button" onclick="resetPatientForm()" style="margin-left:8px;padding:8px 20px;border:0;cursor:pointer;">Cancel</button></div>
+              </form>
+            </div>
+            """
+        rows = ""
+        for row in patients:
+            actions = f'<button onclick="viewPatient({row["PatientID"]})" style="background:#004488;color:white;border:0;padding:5px 10px;cursor:pointer;">View</button>'
+            if can_manage:
+                actions += f' <button onclick="editPatient({row["PatientID"]})" style="background:#8a5a00;color:white;border:0;padding:5px 10px;cursor:pointer;">Edit</button> <button onclick="deletePatient({row["PatientID"]})" style="background:#a00020;color:white;border:0;padding:5px 10px;cursor:pointer;">Delete</button>'
+            rows += f'<tr><td>{row["PatientID"]}</td><td>{esc(row["FullName"])}</td><td>{esc(row["NIC"] or "-")}</td><td>{esc(row["DateOfBirth"] or "-")}</td><td>{esc(row["Gender"] or "-")}</td><td>{esc(row["ContactNo"] or "-")}</td><td>{actions}</td></tr>'
+        search = '<input id="patient-search" oninput="filterPatientTable()" placeholder="Search by name, NIC or contact number" style="width:100%;padding:8px;margin-bottom:12px;box-sizing:border-box;">'
+        table = f'<div style="overflow-x:auto;"><table id="patient-table" border="1" cellpadding="8" cellspacing="0" style="width:100%;border-collapse:collapse;background:white;"><thead><tr style="background:#260099;color:white;"><th>ID</th><th>Full Name</th><th>NIC</th><th>Date of Birth</th><th>Gender</th><th>Contact</th><th>Actions</th></tr></thead><tbody>{rows or "<tr><td colspan=\"7\">No patient records found.</td></tr>"}</tbody></table></div>'
+        return page_heading("Patient Management", add_button + form_html + search + table)
+
     if page_id == "laboratory":
         query = "SELECT * FROM LaboratoryTest ORDER BY TestID DESC"
         tests = execute_query(query) or []
@@ -1353,16 +1644,56 @@ def dynamic_page(page_id: str, authorization: str | None = Header(None)) -> str:
         return page_heading("Reports Centre", report_html)
 
     if page_id == "court_reports":
-        query = """
-            SELECT cr.*, fc.CaseNumber 
-            FROM CourtReport cr 
-            LEFT JOIN ForensicCase fc ON cr.CaseID = fc.CaseID 
+        reports = execute_query("""
+            SELECT cr.CourtReportID, cr.CaseID, fc.CaseNumber, fc.CaseType,
+                   cr.SubmissionDate, cr.Status, cr.ReportContent
+            FROM CourtReport cr
+            LEFT JOIN ForensicCase fc ON cr.CaseID = fc.CaseID
             ORDER BY cr.CourtReportID DESC
-        """
-        reports = execute_query(query) or []
-        lis = "".join(f'<li><strong>CR-{esc(str(row["CourtReportID"]))} ({esc(row["CaseNumber"])}):</strong> {esc(row["Status"])} — {esc(row["ReportContent"])}</li>' for row in reports)
-        return page_heading("Court Reports & Testimonies", f'<div style="background:white;border:1px solid #e0dacb;padding:20px;"><ul>{lis}</ul></div>')
-    
+        """) or []
+        cases_list = execute_query("SELECT CaseID, CaseNumber, CaseType FROM ForensicCase ORDER BY CaseID DESC") or []
+        options = "".join(f'<option value="{r["CaseID"]}">{esc(r["CaseNumber"])} — {esc(r["CaseType"] or "Unknown")}</option>' for r in cases_list)
+        total = len(reports)
+        drafts = sum(1 for r in reports if (r.get("Status") or "").lower() == "draft")
+        submitted = sum(1 for r in reports if (r.get("Status") or "").lower() == "submitted")
+        pending = sum(1 for r in reports if (r.get("Status") or "").lower() in {"pending", "pending review"})
+        rows_html = "".join(
+            f'''<tr data-report-row>
+            <td style="padding:9px;font-weight:bold;color:#260099;">CR-{esc(str(r["CourtReportID"]))}</td>
+            <td style="padding:9px;"><strong>{esc(r["CaseNumber"] or "Unlinked")}</strong><br><small>{esc(r["CaseType"] or "Unknown")}</small></td>
+            <td style="padding:9px;">{esc(str(r["SubmissionDate"]) if r["SubmissionDate"] else "Not set")}</td>
+            <td style="padding:9px;"><span style="background:#eee;padding:4px 8px;border-radius:12px;font-weight:bold;font-size:11px;">{esc(r["Status"] or "Draft")}</span></td>
+            <td style="padding:9px;max-width:360px;white-space:normal;">{esc(r["ReportContent"] or "No content")}</td>
+            <td style="padding:9px;white-space:nowrap;"><button onclick="viewCourtReport({r["CourtReportID"]})">View</button> <button onclick="editCourtReport({r["CourtReportID"]})">Edit</button> <button onclick="deleteCourtReport({r["CourtReportID"]})" style="background:#b00020;color:white;border:0;padding:5px 8px;">Delete</button></td>
+            </tr>''' for r in reports
+        ) or '<tr><td colspan="6" style="padding:35px;text-align:center;color:#666;">No court reports yet. Click <strong>+ Add Court Report</strong>.</td></tr>'
+        body = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:15px;">
+          <p style="margin:0;color:#555;">Create, review and submit official forensic court reports.</p>
+          <div><button type="button" onclick="downloadReportPdf('court')" style="padding:9px 12px;background:white;color:#260099;border:1px solid #260099;">Download PDF</button> <a href="#court-report-create" style="display:inline-block;padding:10px 15px;background:#260099;color:white;text-decoration:none;font-weight:bold;">+ Add Court Report</a></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:15px;">
+          <div style="background:white;border-left:4px solid #260099;padding:13px;"><small>Total Reports</small><div style="font-size:25px;font-weight:bold;">{total}</div></div>
+          <div style="background:white;border-left:4px solid #777;padding:13px;"><small>Drafts</small><div style="font-size:25px;font-weight:bold;">{drafts}</div></div>
+          <div style="background:white;border-left:4px solid #cc8800;padding:13px;"><small>Pending Review</small><div style="font-size:25px;font-weight:bold;">{pending}</div></div>
+          <div style="background:white;border-left:4px solid #16833b;padding:13px;"><small>Submitted</small><div style="font-size:25px;font-weight:bold;">{submitted}</div></div>
+        </div>
+        <details id="court-report-create" style="background:#f7f5fc;border:1px solid #cbc3e4;padding:18px;margin-bottom:15px;" open>
+          <summary style="cursor:pointer;font-size:18px;font-weight:bold;color:#260099;margin-bottom:14px;">Create New Court Report</summary>
+          <form onsubmit="handleCreateCourtReport(event)">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">
+              <div><label><strong>Forensic Case *</strong></label><select id="court-case-id" required style="width:100%;padding:9px;margin-top:4px;"><option value="">Select case</option>{options}</select></div>
+              <div><label><strong>Submission Date *</strong></label><input id="court-submission-date" type="date" value="{date.today().isoformat()}" required style="width:100%;padding:9px;margin-top:4px;box-sizing:border-box;"></div>
+              <div><label><strong>Status *</strong></label><select id="court-status" style="width:100%;padding:9px;margin-top:4px;"><option>Draft</option><option>Pending Review</option><option>Approved</option><option>Submitted</option><option>Returned</option></select></div>
+            </div>
+            <div style="margin-top:11px;"><label><strong>Medical Findings and Court Report Content *</strong></label><textarea id="court-report-content" minlength="10" required rows="8" style="width:100%;padding:9px;margin-top:4px;box-sizing:border-box;" placeholder="Enter examination findings, medical opinion, conclusions and information prepared for court..."></textarea></div>
+            <div id="court-form-message" style="margin-top:8px;"></div><div style="margin-top:10px;"><button type="submit" style="background:#260099;color:white;border:0;padding:9px 16px;">Save Court Report</button> <button type="button" onclick="document.getElementById('court-report-create').removeAttribute('open')" style="padding:9px 16px;">Cancel</button></div>
+          </form>
+        </details>
+        <div style="background:white;border:1px solid #ddd;padding:13px;"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;"><h3 style="margin:0;color:#260099;">Court Report Register</h3><input id="court-report-search" oninput="filterCourtReports()" placeholder="Search reports..." style="padding:8px;min-width:260px;"></div><div style="overflow-x:auto;"><table id="court-report-table" style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#260099;color:white;text-align:left;"><th style="padding:9px;">Report No.</th><th style="padding:9px;">Case</th><th style="padding:9px;">Date</th><th style="padding:9px;">Status</th><th style="padding:9px;">Report Content</th><th style="padding:9px;">Actions</th></tr></thead><tbody>{rows_html}</tbody></table></div></div>
+        '''
+        return page_heading("Court Reports & Testimonies", body)
+
     if page_id == "incidents":
         can_manage = check_permission(user["username"], "Manage Evidence")
         

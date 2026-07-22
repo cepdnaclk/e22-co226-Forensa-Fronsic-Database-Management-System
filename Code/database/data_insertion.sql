@@ -19,9 +19,61 @@ VALUES
 (4,'labtech','lab123','Laboratory Assistant',3),
 (5,'evidence1','evidence123','Field Duty Officer',4);
 
+<<<<<<< HEAD
 -- =========================================================
 -- 2. AuditLog
 -- =========================================================
+=======
+-- ==========================================
+-- Role
+-- ==========================================
+INSERT INTO Role
+(RoleName)
+VALUES
+('Administrator'),
+('JMO'),
+('Doctor'),
+('Lab Technician'),
+('Evidence Officer');
+
+-- ==========================================
+-- Permission
+-- ==========================================
+INSERT INTO Permission
+(PermissionName)
+VALUES
+('Manage Users'),
+('Manage Cases'),
+('View Reports'),
+('Manage Evidence'),
+('Perform Laboratory Tests'),
+('Generate Court Reports');
+
+-- ==========================================
+-- RolePermission
+-- ==========================================
+INSERT INTO RolePermission
+(RoleID, PermissionID)
+VALUES
+(1,1),
+(1,2),
+(1,3),
+(1,4),
+(1,5),
+(1,6),
+(2,2),
+(2,3),
+(2,6),
+(3,2),
+(3,3),
+(3,6),
+(4,5),
+(5,4);
+
+-- ==========================================
+-- AuditLog
+-- ==========================================
+>>>>>>> 23afcbe (Added patient management and improved court reports)
 INSERT INTO AuditLog
 (AuditID, UserID, Action, ActionDate)
 VALUES

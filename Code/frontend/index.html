@@ -117,7 +117,7 @@
             const user = getAuthUser();
             if (!user) return 'about_us';
             if (user.role === 'Lab Technician') return 'laboratory';
-            if (user.role === 'Evidence Officer') return 'incidents';
+            if (user.role === 'Evidence Officer') return 'cases';
             return 'cases';
         }
 
@@ -139,6 +139,7 @@
                 if (user.role === 'Administrator') {
                     linksHtml += `
                         <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-patients" href="#patients" style="color: #ffffff; text-decoration: none; margin-right: 15px;">PATIENTS</a>
                         <a id="nav-laboratory" href="#laboratory" style="color: #ffffff; text-decoration: none; margin-right: 15px;">LABORATORY</a>
                         <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
                         <a id="nav-reports" href="#reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">REPORTS</a>
@@ -149,6 +150,7 @@
                 } else if (user.role === 'JMO') {
                     linksHtml += `
                         <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-patients" href="#patients" style="color: #ffffff; text-decoration: none; margin-right: 15px;">PATIENTS</a>
                         <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
                         <a id="nav-reports" href="#reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">REPORTS</a>
                         <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
@@ -156,6 +158,8 @@
                 } else if (user.role === 'Doctor') {
                     linksHtml += `
                         <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
+                        <a id="nav-patients" href="#patients" style="color: #ffffff; text-decoration: none; margin-right: 15px;">PATIENTS</a>
+                        <a id="nav-court_reports" href="#court_reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">COURT_REPORTS</a>
                         <a id="nav-reports" href="#reports" style="color: #ffffff; text-decoration: none; margin-right: 15px;">REPORTS</a>
                         <a id="nav-staff" href="#staff" style="color: #ffffff; text-decoration: none; margin-right: 15px;">STAFF</a>
                     `;
@@ -166,6 +170,7 @@
                     `;
                 } else if (user.role === 'Evidence Officer') {
                     linksHtml += `
+                        <a id="nav-cases" href="#cases" style="color: #ffffff; text-decoration: none; margin-right: 15px;">CASES</a>
                         <a id="nav-incidents" href="#incidents" style="color: #ffffff; text-decoration: none; margin-right: 15px;">INCIDENTS</a>
                     `;
                 }
@@ -228,11 +233,11 @@
             // Enforce role-based page permission checks on the client side
             if (token && !publicPages.includes(pageId)) {
                 const allowed = {
-                    'Administrator': ['cases', 'laboratory', 'court_reports', 'reports', 'incidents', 'staff', 'audit_logs'],
-                    'JMO': ['cases', 'court_reports', 'reports', 'staff'],
-                    'Doctor': ['cases', 'reports', 'staff'],
+                    'Administrator': ['cases', 'patients', 'laboratory', 'court_reports', 'reports', 'incidents', 'staff', 'audit_logs'],
+                    'JMO': ['cases', 'patients', 'court_reports', 'reports', 'staff'],
+                    'Doctor': ['cases', 'patients', 'court_reports', 'reports', 'staff'],
                     'Lab Technician': ['laboratory', 'incidents'],
-                    'Evidence Officer': ['incidents']
+                    'Evidence Officer': ['cases', 'incidents']
                 };
                 const user = getAuthUser();
                 if (user && allowed[user.role] && !allowed[user.role].includes(pageId)) {
@@ -542,6 +547,132 @@
             } catch (error) {
                 alert("Error creating case: " + error.message);
             }
+        }
+
+        function togglePatientForm() {
+            const box = document.getElementById('patient-form-container');
+            if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function resetPatientForm() {
+            const box = document.getElementById('patient-form-container');
+            if (!box) return;
+            document.getElementById('patient-id').value = '';
+            document.getElementById('patient-full-name').value = '';
+            document.getElementById('patient-nic').value = '';
+            document.getElementById('patient-dob').value = '';
+            document.getElementById('patient-gender').value = '';
+            document.getElementById('patient-contact').value = '';
+            document.getElementById('patient-address').value = '';
+            document.getElementById('patient-form-title').textContent = 'Add New Patient';
+            box.style.display = 'none';
+        }
+
+        async function patientRequest(url, options = {}) {
+            const token = getAuthToken();
+            options.headers = Object.assign({}, options.headers || {}, {'Authorization': `Bearer ${token}`});
+            const response = await fetch(`${apiBase}${url}`, options);
+            if (response.status === 204) return null;
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Patient operation failed');
+            return data;
+        }
+
+        async function handleSavePatient(event) {
+            event.preventDefault();
+            const id = document.getElementById('patient-id').value;
+            const payload = {
+                full_name: document.getElementById('patient-full-name').value,
+                nic: document.getElementById('patient-nic').value || null,
+                date_of_birth: document.getElementById('patient-dob').value || null,
+                gender: document.getElementById('patient-gender').value || null,
+                contact_no: document.getElementById('patient-contact').value || null,
+                address: document.getElementById('patient-address').value || null
+            };
+            try {
+                await patientRequest(id ? `/api/patients/${id}` : '/api/patients', {
+                    method: id ? 'PATCH' : 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                alert(id ? 'Patient updated successfully.' : 'Patient created successfully.');
+                loadContent();
+            } catch (error) { alert(error.message); }
+        }
+
+        async function viewPatient(id) {
+            try {
+                const p = await patientRequest(`/api/patients/${id}`);
+                const linkedCases = (p.cases || []).map(c => `${c.CaseNumber} (${c.Status || 'Unknown'})`).join('\n') || 'No linked cases';
+                alert(`Patient ID: ${p.id}\nName: ${p.full_name}\nNIC: ${p.nic || '-'}\nDate of Birth: ${p.date_of_birth || '-'}\nGender: ${p.gender || '-'}\nContact: ${p.contact_no || '-'}\nAddress: ${p.address || '-'}\n\nLinked Cases:\n${linkedCases}`);
+            } catch (error) { alert(error.message); }
+        }
+
+        async function editPatient(id) {
+            try {
+                const p = await patientRequest(`/api/patients/${id}`);
+                document.getElementById('patient-id').value = p.id;
+                document.getElementById('patient-full-name').value = p.full_name || '';
+                document.getElementById('patient-nic').value = p.nic || '';
+                document.getElementById('patient-dob').value = p.date_of_birth || '';
+                document.getElementById('patient-gender').value = p.gender || '';
+                document.getElementById('patient-contact').value = p.contact_no || '';
+                document.getElementById('patient-address').value = p.address || '';
+                document.getElementById('patient-form-title').textContent = 'Edit Patient';
+                document.getElementById('patient-form-container').style.display = 'block';
+                window.scrollTo({top: 0, behavior: 'smooth'});
+            } catch (error) { alert(error.message); }
+        }
+
+        async function deletePatient(id) {
+            if (!confirm('Delete this patient record?')) return;
+            try {
+                await patientRequest(`/api/patients/${id}`, {method: 'DELETE'});
+                alert('Patient deleted successfully.');
+                loadContent();
+            } catch (error) { alert(error.message); }
+        }
+
+        function filterPatientTable() {
+            const query = (document.getElementById('patient-search')?.value || '').toLowerCase();
+            document.querySelectorAll('#patient-table tbody tr').forEach(row => {
+                row.style.display = row.textContent.toLowerCase().includes(query) ? '' : 'none';
+            });
+        }
+
+        function toggleCourtReportForm() {
+            const box = document.getElementById('court-report-form-container');
+            if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function handleCreateCourtReport(event) {
+            event.preventDefault();
+            const msg = document.getElementById('court-form-message');
+            const payload = {case_id:Number(document.getElementById('court-case-id').value), submission_date:document.getElementById('court-submission-date').value, status:document.getElementById('court-status').value, report_content:document.getElementById('court-report-content').value.trim()};
+            try {
+                const response = await fetch(`${apiBase}/api/court-reports`, {method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${getAuthToken()}`}, body:JSON.stringify(payload)});
+                const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Unable to save report');
+                if (msg) msg.innerHTML='<span style="color:green;">Court report saved successfully.</span>'; setTimeout(loadContent,400);
+            } catch(error) { if(msg) msg.innerHTML=`<span style="color:#b00020;">${error.message}</span>`; }
+        }
+
+        async function viewCourtReport(id) {
+            const response=await fetch(`${apiBase}/api/court-reports/${id}`,{headers:{'Authorization':`Bearer ${getAuthToken()}`}}); const r=await response.json();
+            if(!response.ok){alert(r.detail||'Unable to load report');return;} alert(`COURT REPORT CR-${r.CourtReportID}\n\nCase: ${r.CaseNumber||'Unlinked'}\nType: ${r.CaseType||'Unknown'}\nDate: ${r.SubmissionDate||'Not set'}\nStatus: ${r.Status||'Draft'}\n\n${r.ReportContent||'No content'}`);
+        }
+
+        async function editCourtReport(id) {
+            const headers={'Authorization':`Bearer ${getAuthToken()}`}; const response=await fetch(`${apiBase}/api/court-reports/${id}`,{headers}); const r=await response.json();
+            if(!response.ok){alert(r.detail||'Unable to load report');return;} const status=prompt('Status: Draft, Pending Review, Approved, Submitted, Returned',r.Status||'Draft'); if(status===null)return; const content=prompt('Court report content:',r.ReportContent||''); if(content===null)return;
+            const update=await fetch(`${apiBase}/api/court-reports/${id}`,{method:'PATCH',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({status,report_content:content})}); const data=await update.json(); if(!update.ok){alert(data.detail||'Unable to update');return;} alert('Court report updated.'); loadContent();
+        }
+
+        async function deleteCourtReport(id) {
+            if(!confirm(`Delete court report CR-${id}?`))return; const response=await fetch(`${apiBase}/api/court-reports/${id}`,{method:'DELETE',headers:{'Authorization':`Bearer ${getAuthToken()}`}}); const data=await response.json(); if(!response.ok){alert(data.detail||'Unable to delete');return;} alert('Court report deleted.'); loadContent();
+        }
+
+        function filterCourtReports() {
+            const q=(document.getElementById('court-report-search')?.value||'').toLowerCase(); document.querySelectorAll('#court-report-table tbody tr[data-report-row]').forEach(row=>row.style.display=row.textContent.toLowerCase().includes(q)?'':'none');
         }
 
         function toggleAddIncidentForm() {
