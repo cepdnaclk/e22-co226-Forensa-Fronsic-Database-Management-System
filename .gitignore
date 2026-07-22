@@ -1,3 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Ignore environment files
+.env
+Code/backend/.env
