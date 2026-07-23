@@ -1,0 +1,313 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{primaryblue}{rgb}{0.15,0.0,0.6}
+\definecolor{backcolour}{rgb}{0.96,0.96,0.94}
+
+\lstset{
+  backgroundcolor=\color{backcolour},
+  commentstyle=\color{codegreen},
+  keywordstyle=\color{primaryblue}\bfseries,
+  numberstyle=\tiny\color{codegray},
+  stringstyle=\color{codepurple},
+  basicstyle={\small\ttfamily},
+  breakatwhitespace=false,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=5pt,
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2,
+  language=SQL
+}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=primaryblue,
+    filecolor=codepurple,      
+    urlcolor=primaryblue,
+}
+
+\begin{document}
+
+% ----------------------------------------------------
+% COVER PAGE
+% ----------------------------------------------------
+\begin{titlepage}
+    \centering
+    \vspace*{1.5cm}
+    \Huge
+    \textbf{UNIVERSITY OF PERADENIYA}\\
+    \vspace{0.5cm}
+    \large
+    Faculty of Engineering\\
+    Department of Computer Engineering\\
+    \vspace{1.5cm}
+    \Large
+    \textbf{CO327 - Database Systems}\\
+    \vspace{1cm}
+    \Huge
+    \textbf{Individual Contribution Report}\\
+    \vspace{0.8cm}
+    \Large
+    \textit{Database Design, Normalization, and Implementation for the ``Forensa'' Forensic Medical Management System}\\
+    \vspace{2.5cm}
+    \textbf{Sasvi Gunasiri (E/22/120)}\\
+    \large
+    Role: Database Lead (Contribution: 34\%)\\
+    \vspace{2.5cm}
+    \textbf{Lecturers:}\\
+    Dr. Asitha Bandaranayake\\
+    Dr. Dhammika Elkaduwe\\
+    \vfill
+    \large
+    Submission Date: July 20, 2026
+\end{titlepage}
+
+\newpage
+\tableofcontents
+\newpage
+
+% ----------------------------------------------------
+% SECTION 1: INTRODUCTION & ROLE DEFINITION
+% ----------------------------------------------------
+\section{Introduction \& Role Definition}
+This report outlines my individual contributions as the \textbf{Database Lead} for the design, development, and testing of the \textit{Forensa} Forensic Medical Department Management System. 
+
+The \textit{Forensa} system is designed to digitalize the workflow of a forensic medical department, replacing insecure and fragile manual logbooks with a secure, highly relational database. As the Database Lead, my primary responsibilities were:
+\begin{itemize}
+    \item Designing the relational schema modeling forensic clinical and administrative tasks.
+    \item Creating and refining the Entity-Relationship Diagram (ERD).
+    \item Enforcing database normalization rules up to the Third Normal Form (3NF) to eliminate reduncancies and prevent update anomalies.
+    \item Writing the Database Definition Language (DDL) scripts for the creation of tables, foreign keys, and indexes.
+    \item Designing the sample dataset (DML script) to enable end-to-end integration testing.
+    \item Implementing indexing, triggers, views, and integrity check constraints to optimize query processing times.
+\end{itemize}
+
+% ----------------------------------------------------
+% SECTION 2: REQUIREMENTS ANALYSIS & ENTITY RELATIONSHIP MODELING
+% ----------------------------------------------------
+\section{Requirements Analysis \& ER Modeling}
+Prior to starting database implementation, I conducted a domain analysis to define the entities. A forensic medical department requires tracking patients, legal cases, postmortem examinations, physical evidence items, evidence sample splits, laboratory analyses, court reports, and detailed logs of evidence custody handovers.
+
+I designed a highly relational structure comprising 26 tables. The primary database structure focuses on the relationships between:
+\begin{enumerate}
+    \item \textbf{Patient \& Forensic Case:} A patient record must exist before a forensic case is opened.
+    \item \textbf{Case \& Postmortem:} Autopsies are assigned to a JMO (Judicial Medical Officer). Assigning a JMO automatically initializes a postmortem record.
+    \item \textbf{Case \& Evidence:} Cases link to multiple collected evidence items.
+    \item \textbf{Evidence \& Laboratory Test / Chain of Custody:} Evidence transfers are audited through custody logs to maintain legal acceptability in court.
+    \item \textbf{Role-Based Access Control (RBAC):} Users login through accounts associated with roles mapped to specific table permissions.
+\end{enumerate}
+
+The ER Diagram was modeled using Crow's foot notation representing one-to-many and one-to-one constraints.
+
+% ----------------------------------------------------
+% SECTION 3: SYSTEMATIC NORMALIZATION
+% ----------------------------------------------------
+\section{Systematic Normalization}
+To guarantee that the database does not store redundant records and is safe from insertion, deletion, and modification anomalies, I performed a step-by-step normalization process.
+
+\subsection{Unnormalized Form (UNF)}
+In the manual register layout, records were compiled in a single wide format:
+\begin{align*}
+\text{UNF\_CaseDetails} = \{&\text{CaseID}, \text{CaseNumber}, \text{CaseType}, \text{IncidentDate}, \text{IncidentLocation}, \text{CaseDescription}, \\
+&\text{PatientNIC}, \text{PatientName}, \text{PatientDOB}, \text{PatientGender}, \text{PatientAddress}, \\
+&\text{JMO\_ID}, \text{JMOMemberName}, \text{Specialization}, \text{LicenseNo}, \text{Department}, \\
+&\text{AutopsyFindings}, \text{AutopsyCauseOfDeath}, \text{AutopsyExaminationDate}\}
+\end{align*}
+
+\subsection{First Normal Form (1NF)}
+\begin{itemize}
+    \item \textbf{Action:} Eliminate multi-valued attributes and ensure that all columns contain atomic values. We establish a primary key (\textbf{CaseNumber}).
+    \item \textbf{Result:}
+\end{itemize}
+\begin{align*}
+\text{CaseDetails\_1NF} = \{&\textbf{CaseNumber}, \text{CaseID}, \text{CaseType}, \text{IncidentDate}, \text{IncidentLocation}, \text{CaseDescription}, \\
+&\text{PatientNIC}, \text{PatientName}, \text{PatientDOB}, \text{PatientGender}, \text{PatientAddress}, \\
+&\text{JMO\_ID}, \text{JMOMemberName}, \text{Specialization}, \text{LicenseNo}, \text{Department}, \\
+&\text{AutopsyFindings}, \text{AutopsyCauseOfDeath}, \text{AutopsyExaminationDate}\}
+\end{align*}
+
+\subsection{Second Normal Form (2NF)}
+\begin{itemize}
+    \item \textbf{Action:} Eliminate partial dependencies. Non-key attributes must depend on the entire candidate key. Since we have a single primary key, this is technically satisfied. However, to avoid redundancy when a single patient has multiple cases, or a JMO is assigned to multiple autopsies, we extract the separate entities:
+    \item \textbf{Result:}
+\end{itemize}
+\begin{itemize}
+    \item $\text{Patient} = \{\textbf{PatientNIC}, \text{PatientName}, \text{PatientDOB}, \text{PatientGender}, \text{PatientAddress}\}$
+    \item $\text{JMO} = \{\textbf{JMO\_ID}, \text{JMOMemberName}, \text{Specialization}, \text{LicenseNo}, \text{Department}\}$
+    \item $\text{ForensicCase} = \{\textbf{CaseNumber}, \text{CaseID}, \text{CaseType}, \text{IncidentDate}, \text{IncidentLocation}, \text{CaseDescription}, \text{Status}, \text{\textit{PatientNIC}}, \text{\textit{JMO\_ID}}, \text{AutopsyFindings}, \text{AutopsyCauseOfDeath}\}$
+\end{itemize}
+
+\subsection{Third Normal Form (3NF)}
+\begin{itemize}
+    \item \textbf{Action:} Eliminate transitive dependencies. In the JMO relation, the specialized attributes depend on the Doctor entity, which in turn depends on the Staff entity. We must split these into distinct tables linked via foreign keys. Furthermore, autopsy details (findings and cause of death) relate directly to a specific postmortem examination rather than the general case file.
+    \item \textbf{Result:}
+\end{itemize}
+\begin{itemize}
+    \item $\text{Staff} = \{\textbf{StaffID}, \text{StaffName}, \text{Role}, \text{ContactNo}, \text{Email}\}$
+    \item $\text{Doctor} = \{\textbf{DoctorID}, \text{\textit{StaffID}}, \text{Specialization}, \text{LicenseNo}\}$
+    \item $\text{JMO} = \{\textbf{JMO\_ID}, \text{\textit{DoctorID}}, \text{Department}\}$
+    \item $\text{Patient} = \{\textbf{PatientID}, \text{FullName}, \text{NIC}, \text{DateOfBirth}, \text{Gender}, \text{Address}\}$
+    \item $\text{ForensicCase} = \{\textbf{CaseID}, \text{\textit{PatientID}}, \text{CaseNumber}, \text{CaseType}, \text{IncidentDate}, \text{IncidentLocation}, \text{Status}\}$
+    \item $\text{Postmortem} = \{\textbf{PostmortemID}, \text{\textit{CaseID}}, \text{\textit{JMO\_ID}}, \text{ExaminationDate}, \text{Findings}, \text{CauseOfDeath}\}$
+\end{itemize}
+This 3NF relational schema was successfully implemented in our database.
+
+% ----------------------------------------------------
+% SECTION 4: DATABASE SCHEMAS & IMPLEMENTATION (DDL)
+% ----------------------------------------------------
+\section{Database Schema Implementation (DDL)}
+I implemented the database schema using MySQL Community Server 8.0 with the InnoDB storage engine. Below are the key DDL scripts I authored for database creation:
+
+\begin{lstlisting}[caption={Core Tables Implementation - Patient, ForensicCase, and Postmortem}]
+CREATE DATABASE ForensicMedicalDB;
+USE ForensicMedicalDB;
+
+CREATE TABLE Patient(
+    PatientID INT AUTO_INCREMENT PRIMARY KEY,
+    FullName VARCHAR(100) NOT NULL,
+    NIC VARCHAR(20) UNIQUE,
+    DateOfBirth DATE,
+    Gender VARCHAR(10),
+    Address VARCHAR(255),
+    ContactNo VARCHAR(15),
+    RegistrationDate DATE
+);
+
+CREATE TABLE ForensicCase(
+    CaseID INT AUTO_INCREMENT PRIMARY KEY,
+    PatientID INT,
+    CaseNumber VARCHAR(50) UNIQUE,
+    CaseType VARCHAR(50),
+    IncidentDate DATE,
+    IncidentLocation VARCHAR(200),
+    CaseDescription TEXT,
+    Status VARCHAR(30),
+    FOREIGN KEY(PatientID) REFERENCES Patient(PatientID)
+);
+
+CREATE TABLE Staff(
+    StaffID INT AUTO_INCREMENT PRIMARY KEY,
+    StaffName VARCHAR(100),
+    Role VARCHAR(50),
+    ContactNo VARCHAR(15),
+    Email VARCHAR(100)
+);
+
+CREATE TABLE Doctor(
+    DoctorID INT AUTO_INCREMENT PRIMARY KEY,
+    StaffID INT,
+    Specialization VARCHAR(100),
+    LicenseNo VARCHAR(50),
+    FOREIGN KEY(StaffID) REFERENCES Staff(StaffID)
+);
+
+CREATE TABLE JMO(
+    JMO_ID INT AUTO_INCREMENT PRIMARY KEY,
+    DoctorID INT,
+    Department VARCHAR(100),
+    FOREIGN KEY(DoctorID) REFERENCES Doctor(DoctorID)
+);
+
+CREATE TABLE Postmortem(
+    PostmortemID INT AUTO_INCREMENT PRIMARY KEY,
+    CaseID INT,
+    JMO_ID INT,
+    ExaminationDate DATE,
+    Findings TEXT,
+    CauseOfDeath VARCHAR(255),
+    FOREIGN KEY(CaseID) REFERENCES ForensicCase(CaseID),
+    FOREIGN KEY(JMO_ID) REFERENCES JMO(JMO_ID)
+);
+\end{lstlisting}
+
+% ----------------------------------------------------
+% SECTION 5: ADVANCED DATABASE FEATURES
+% ----------------------------------------------------
+\section{Advanced Database Features}
+To enhance query performance, security audits, and automation, I implemented several advanced database components:
+
+\subsection{Indexes}
+To optimize query performance on cases and patients, I created explicit indexes on the search criteria:
+\begin{lstlisting}
+CREATE INDEX idx_case_number ON ForensicCase(CaseNumber);
+CREATE INDEX idx_patient_nic ON Patient(NIC);
+\end{lstlisting}
+
+\subsection{Database Views}
+I designed a reporting view that simplifies complex multi-table joins for generating case summary dashboards:
+\begin{lstlisting}
+CREATE VIEW ActiveForensicCases AS
+SELECT fc.CaseID, fc.CaseNumber, fc.CaseType, p.FullName AS PatientName, 
+       s.StaffName AS AssignedJMO, fc.Status, fc.IncidentDate
+FROM ForensicCase fc
+LEFT JOIN Patient p ON fc.PatientID = p.PatientID
+LEFT JOIN Postmortem pm ON fc.CaseID = pm.CaseID
+LEFT JOIN JMO j ON pm.JMO_ID = j.JMO_ID
+LEFT JOIN Doctor d ON j.DoctorID = d.DoctorID
+LEFT JOIN Staff s ON d.StaffID = s.StaffID;
+\end{lstlisting}
+
+\subsection{Stored Procedures}
+To assist in reporting metrics, I authored a stored procedure that counts active cases by status:
+\begin{lstlisting}
+DELIMITER //
+CREATE PROCEDURE GetCaseCountByStatus(IN case_status VARCHAR(30), OUT total INT)
+BEGIN
+    SELECT COUNT(*) INTO total 
+    FROM ForensicCase 
+    WHERE Status = case_status;
+END //
+DELIMITER ;
+\end{lstlisting}
+
+\subsection{Database Triggers}
+To automate audit logging, I developed a trigger that automatically inserts an audit entry whenever a new forensic case is registered:
+\begin{lstlisting}
+DELIMITER //
+CREATE TRIGGER after_case_insert
+AFTER INSERT ON ForensicCase
+FOR EACH ROW
+BEGIN
+    INSERT INTO AuditLog (UserID, Action, ActionDate)
+    VALUES (1, CONCAT('Triggered Intake: Case ', NEW.CaseNumber), NOW());
+END //
+DELIMITER ;
+\end{lstlisting}
+
+% ----------------------------------------------------
+% SECTION 6: REFLECTIONS & CHALLENGES
+% ----------------------------------------------------
+\section{Reflections \& Challenges}
+Designing a database system for a forensic medical department presented several technical challenges:
+\begin{itemize}
+    \item \textbf{Managing Relational Integrity on Cascaded Deletes:} Setting up clean delete logic for cases required implementing a cascading delete order across tables (deleting records from `ExaminationReport`, `Postmortem`, `Incident`, `CourtReport`, `CaseCourt`, and `Evidence` tables before the `ForensicCase` record).
+    \item \textbf{Modeling Role Inheritance:} Creating the relationships between `Staff`, `Doctor`, and `JMO` required setting up specialization/generalization inheritance structures in SQL. This was resolved using one-to-one foreign key constraints between primary keys.
+    \item \textbf{Performance Optimization:} Resolving query bottlenecks during multi-table joins on dashboard rendering. Creating targeted B-Tree indexes on `CaseNumber` and `NIC` successfully reduced query response times.
+\end{itemize}
+
+Through this project, I gained practical experience in translating domain requirements into normalized database schemas. I also learned about transaction management, rollback operations, and performance tuning in MySQL.
+
+% ----------------------------------------------------
+% SECTION 7: CONCLUSION
+% ----------------------------------------------------
+\section{Conclusion}
+The database engine for \textit{Forensa} successfully supports all functional requirements of the forensic medical department. It ensures data consistency, provides secure access control through role definitions, and tracks evidence transitions securely. This database replaces the vulnerabilities of manual record keeping with a digital repository that supports the judicial process.
+
+\end{document}
